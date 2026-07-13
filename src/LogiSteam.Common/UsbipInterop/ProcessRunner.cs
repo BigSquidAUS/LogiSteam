@@ -76,4 +76,34 @@ public static class ProcessRunner
             return null;
         }
     }
+
+    /// <summary>
+    /// Runs several commands under a single elevation prompt (e.g. registering AutoBind policies
+    /// for every persona of a multi-persona wheel profile) -- without this, a naive per-command
+    /// loop over RunElevatedAsync would trigger one UAC prompt per command, turning a 3-persona
+    /// profile's first run into three separate "Yes" clicks instead of one.
+    /// </summary>
+    public static async Task<int?> RunElevatedBatchAsync(
+        string fileName, IEnumerable<IEnumerable<string>> argumentSets, CancellationToken ct = default)
+    {
+        var (batchFileName, batchArgs) = BuildElevatedBatchCommand(fileName, argumentSets);
+        return await RunElevatedAsync(batchFileName, batchArgs, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Pure: builds the `cmd.exe /c "cmd1 && cmd2 && ..."` invocation used by
+    /// <see cref="RunElevatedBatchAsync"/>. Exposed separately (rather than inlined) so the
+    /// quoting/joining logic is unit-testable without actually spawning a process or triggering UAC.
+    /// </summary>
+    public static (string FileName, IReadOnlyList<string> Arguments) BuildElevatedBatchCommand(
+        string fileName, IEnumerable<IEnumerable<string>> argumentSets)
+    {
+        var commands = argumentSets
+            .Select(args => string.Join(' ', new[] { Quote(fileName) }.Concat(args.Select(Quote))))
+            .ToList();
+
+        return ("cmd.exe", ["/c", string.Join(" && ", commands)]);
+    }
+
+    private static string Quote(string value) => value.Contains(' ') ? $"\"{value}\"" : value;
 }

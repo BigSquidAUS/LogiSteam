@@ -29,6 +29,14 @@ public sealed partial class UsbipCliWrapper(string? executablePath = null)
     [GeneratedRegex(@"port\s+(?<port>\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex AttachedPort();
 
+    // Matches a "Port NN: ..." block header from `usbip port`. usbip-win2 mirrors the Linux usbip
+    // client's CLI (confirmed empirically on a real install: `usbip port` prints nothing at all
+    // when no ports are imported -- empty stdout, exit 0), and Linux usbip's well-documented
+    // "port" output uses this same "Port NN: <state>" block-header format, which this only needs
+    // to detect the presence of a port number for, not parse further.
+    [GeneratedRegex(@"^\s*Port\s+(?<port>\d+):", RegexOptions.IgnoreCase | RegexOptions.Multiline)]
+    private static partial Regex PortLine();
+
     private static string ResolveExecutablePath() => TryFindInstalledExecutable() ?? "usbip";
 
     /// <summary>
@@ -135,6 +143,29 @@ public sealed partial class UsbipCliWrapper(string? executablePath = null)
         var match = AttachedPort().Match(stdOut);
         return match.Success && int.TryParse(match.Groups["port"].Value, out var port) ? port : null;
     }
+
+    /// <summary>
+    /// Lists locally-imported (attached) VHCI port numbers, for verifying a previously-successful
+    /// attach is still genuinely alive rather than trusting the in-memory "attached" flag forever
+    /// -- the local attachment can die silently (sleep/resume, a driver hiccup) without the Wheel
+    /// PC's beacon ever indicating anything is wrong.
+    /// </summary>
+    public async Task<IReadOnlyList<int>> ListPortsAsync(CancellationToken ct = default)
+    {
+        var result = await ProcessRunner.RunAsync(_executablePath, ["port"], ct).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            throw new UsbipCommandException("usbip port", result);
+        }
+
+        return ParsePortList(result.StdOut);
+    }
+
+    /// <summary>Parses `usbip port` output into the set of currently-imported port numbers. Exposed statically so parsing logic is unit-testable without spawning a real process.</summary>
+    public static IReadOnlyList<int> ParsePortList(string stdOut) =>
+        PortLine().Matches(stdOut)
+            .Select(m => int.Parse(m.Groups["port"].Value))
+            .ToList();
 
     public async Task<bool> DetachAsync(int port, CancellationToken ct = default)
     {

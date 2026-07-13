@@ -13,7 +13,7 @@ namespace LogiSteam.Common.Diagnostics;
 /// stub), and the currently-selected device (see SelectedDeviceStore) is tagged distinctly.
 /// </summary>
 public sealed class UsbDeviceInventoryLogger(
-    Func<UsbHardwareId?> getSelectedHardwareId,
+    Func<UsbHardwareId, bool> isSelected,
     string? logPath = null,
     TimeSpan? pollInterval = null) : IDisposable
 {
@@ -120,7 +120,7 @@ public sealed class UsbDeviceInventoryLogger(
             tags += " [LOGITECH]";
         }
 
-        if (getSelectedHardwareId() == hardwareId)
+        if (isSelected(hardwareId))
         {
             tags += " [SELECTED]";
         }

@@ -72,8 +72,10 @@ the full install flow and the Phase 0 validation spike.
 - Force feedback over the network is unverified for this device class -- see the Phase 0 spike.
 - Wired LAN between the two PCs is required; Wi-Fi latency/jitter is not supported.
 - Discovery relies on UDP broadcast, so both PCs must be on the same LAN subnet.
-- `usbipd-win` is GPL-3.0 licensed; LogiSteam invokes its installed CLI as an external process
-  rather than bundling/relinking it (see `docs/ARCHITECTURE.md`).
+- `usbipd-win` is GPL-3.0 licensed and `usbip-win2` is BSD-2-Clause licensed; LogiSteam invokes
+  each one's installed CLI as an external process rather than linking/relinking it, and vendors
+  their installers unmodified for a one-step setup (see `docs/ARCHITECTURE.md` and
+  `THIRD-PARTY-NOTICES.md` for full attribution and license texts).
 - Both apps run an always-on, unauthenticated, read-only TCP diagnostics endpoint (see
   "Diagnosing connection flakiness" in `docs/SETUP.md`) -- a deliberate, user-confirmed tradeoff
   for easy LAN troubleshooting, not something to enable on an untrusted network.

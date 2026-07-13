@@ -13,11 +13,14 @@ public sealed class WheelSideDiagnosticsSnapshot
     [JsonPropertyName("hostName")]
     public required string HostName { get; init; }
 
-    [JsonPropertyName("selectedHardwareId")]
-    public string? SelectedHardwareId { get; init; }
+    [JsonPropertyName("selectedDisplayName")]
+    public string? SelectedDisplayName { get; init; }
 
-    [JsonPropertyName("selectedDescription")]
-    public string? SelectedDescription { get; init; }
+    [JsonPropertyName("selectedHardwareIds")]
+    public IReadOnlyList<string> SelectedHardwareIds { get; init; } = [];
+
+    [JsonPropertyName("currentlyLiveHardwareId")]
+    public string? CurrentlyLiveHardwareId { get; init; }
 
     [JsonPropertyName("statusText")]
     public required string StatusText { get; init; }

@@ -4,11 +4,12 @@ using LogiSteam.Common.UsbipInterop;
 namespace LogiSteam.Common.DeviceDetection;
 
 /// <summary>
-/// Polls Windows PnP device presence for the G29 (or any given hardware id) so
-/// LogiSteam.WheelSide can drive its tray status and beacon gating, without requiring the wheel
-/// to already be plugged in when the app starts.
+/// Polls Windows PnP device presence for any of a wheel's known hardware ids (a manual pick is
+/// one id; an auto-detected profile is every known persona for that model) so
+/// LogiSteam.WheelSide can drive its tray status, without requiring the wheel to already be
+/// plugged in when the app starts. "Present" means any one of the given ids currently matches.
 /// </summary>
-public sealed class WheelDeviceWatcher(UsbHardwareId hardwareId, TimeSpan? pollInterval = null, TimeSpan? disappearanceTolerance = null) : IDisposable
+public sealed class WheelDeviceWatcher(IReadOnlyList<UsbHardwareId> hardwareIds, TimeSpan? pollInterval = null, TimeSpan? disappearanceTolerance = null) : IDisposable
 {
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(1.5);
 
@@ -49,7 +50,7 @@ public sealed class WheelDeviceWatcher(UsbHardwareId hardwareId, TimeSpan? pollI
         // confirmed repro ("USB\%" throws ManagementException "Invalid query" against the real
         // WMI provider). Match the actual hardware id in .NET instead of in the WHERE clause.
         var query = new SelectQuery("Win32_PnPEntity", "DeviceID LIKE 'USB%'");
-        var needle = BuildDeviceIdNeedle(hardwareId);
+        var needles = hardwareIds.Select(BuildDeviceIdNeedle).ToList();
 
         while (!ct.IsCancellationRequested)
         {
@@ -63,7 +64,8 @@ public sealed class WheelDeviceWatcher(UsbHardwareId hardwareId, TimeSpan? pollI
                 {
                     using (item)
                     {
-                        if (MatchesNeedle(item["DeviceID"] as string, needle))
+                        var deviceId = item["DeviceID"] as string;
+                        if (needles.Any(needle => MatchesNeedle(deviceId, needle)))
                         {
                             present = true;
                             break;

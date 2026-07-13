@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 
@@ -33,7 +34,7 @@ public sealed class BeaconBroadcaster : IDisposable
 
     private async Task RunAsync(CancellationToken ct)
     {
-        var endpoint = new IPEndPoint(IPAddress.Broadcast, BeaconProtocol.Port);
+        var globalBroadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, BeaconProtocol.Port);
 
         while (!ct.IsCancellationRequested)
         {
@@ -41,13 +42,16 @@ public sealed class BeaconBroadcaster : IDisposable
             if (message is not null)
             {
                 var payload = Encoding.UTF8.GetBytes(message.ToJson());
-                try
+
+                // Send the global broadcast (works on most single-NIC setups) plus every active
+                // interface's own subnet-directed broadcast (re-resolved every loop iteration,
+                // since interfaces can appear/disappear -- VPN connect, Wi-Fi switch, docking --
+                // while the app is already running). Each send is independent so one bad/blocked
+                // interface can't prevent the others from getting through.
+                await SendBestEffortAsync(payload, globalBroadcastEndpoint).ConfigureAwait(false);
+                foreach (var address in TryGetActiveSubnetBroadcastAddresses())
                 {
-                    await _client.SendAsync(payload, payload.Length, endpoint).ConfigureAwait(false);
-                }
-                catch (SocketException)
-                {
-                    // Best-effort broadcast; a transient network hiccup shouldn't kill the loop.
+                    await SendBestEffortAsync(payload, new IPEndPoint(address, BeaconProtocol.Port)).ConfigureAwait(false);
                 }
             }
 
@@ -59,6 +63,31 @@ public sealed class BeaconBroadcaster : IDisposable
             {
                 break;
             }
+        }
+    }
+
+    private static IReadOnlyList<IPAddress> TryGetActiveSubnetBroadcastAddresses()
+    {
+        try
+        {
+            return BroadcastAddressResolver.GetActiveSubnetBroadcastAddresses();
+        }
+        catch (NetworkInformationException)
+        {
+            // Best-effort: the global broadcast send above still covers the common single-NIC case.
+            return [];
+        }
+    }
+
+    private async Task SendBestEffortAsync(byte[] payload, IPEndPoint endpoint)
+    {
+        try
+        {
+            await _client.SendAsync(payload, payload.Length, endpoint).ConfigureAwait(false);
+        }
+        catch (SocketException)
+        {
+            // Best-effort broadcast; a transient network hiccup on one interface shouldn't kill the loop.
         }
     }
 

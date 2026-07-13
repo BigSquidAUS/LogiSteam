@@ -5,7 +5,7 @@ namespace LogiSteam.Common.UsbipInterop;
 
 /// <summary>
 /// Wraps usbipd.exe (dorssel/usbipd-win), which runs on the Wheel PC and shares the physically
-/// attached G29 over the LAN. LogiSteam never calls `bind` directly -- it registers a persistent
+/// attached wheel over the LAN. LogiSteam never calls `bind` directly -- it registers a persistent
 /// AutoBind policy once, and usbipd-win shares the device automatically from then on whenever a
 /// remote machine asks for it.
 /// </summary>
@@ -26,39 +26,78 @@ public sealed class UsbipdCliWrapper(string executablePath = "usbipd")
             ?? new UsbipdState();
     }
 
-    public async Task<UsbipdDevice?> FindDeviceAsync(UsbHardwareId hardwareId, CancellationToken ct = default)
+    /// <summary>
+    /// Finds the best match for a wheel's candidate hardware ids (e.g. a multi-persona profile's
+    /// known personas). See <see cref="SelectBestMatch"/> for the "prefer a live bus id" logic --
+    /// a mode switch or usbipd-win's bind-time driver swap can leave more than one candidate in
+    /// `usbipd state` simultaneously, only one of which is actually live right now.
+    /// </summary>
+    public async Task<UsbipdDevice?> FindDeviceAsync(IReadOnlyList<UsbHardwareId> candidateHardwareIds, CancellationToken ct = default)
     {
         var state = await GetStateAsync(ct).ConfigureAwait(false);
-        return state.Devices.FirstOrDefault(d => d.HardwareId == hardwareId);
+        return SelectBestMatch(state.Devices, candidateHardwareIds);
     }
 
     /// <summary>
-    /// Ensures a persistent "Allow AutoBind" policy exists for the given hardware id, so the
-    /// device is shared automatically the moment a remote machine attaches -- with no ongoing
-    /// action required from LogiSteam. Idempotent: safe to call on every startup.
+    /// Picks the best match for a set of candidate hardware ids from `usbipd state`'s device
+    /// list -- preferring a device with a live (non-null) BusId over one that only matches
+    /// historically (a stale PersistedGuid from a previous bind, BusId null). Public static and
+    /// pure (no process spawn), same pattern as <see cref="ParseRemoteDeviceList"/>-style parsers
+    /// elsewhere in this codebase, so it's unit-testable without a real usbipd.exe.
     /// </summary>
-    public async Task<bool> EnsureAutoBindPolicyAsync(UsbHardwareId hardwareId, CancellationToken ct = default)
+    public static UsbipdDevice? SelectBestMatch(IReadOnlyList<UsbipdDevice> devices, IReadOnlyList<UsbHardwareId> candidateHardwareIds)
+    {
+        var candidateSet = candidateHardwareIds.ToHashSet();
+        return devices
+            .Where(d => d.HardwareId is { } id && candidateSet.Contains(id))
+            .OrderByDescending(d => d.BusId is not null)
+            .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Ensures a persistent "Allow AutoBind" policy exists for every given hardware id, so each
+    /// persona of a wheel profile is shared automatically the moment a remote machine attaches --
+    /// with no ongoing action required from LogiSteam. Idempotent: safe to call on every startup.
+    /// Batches every still-missing policy into a single elevated invocation, so a multi-persona
+    /// profile only ever produces one UAC prompt (the first time it's needed), not one per persona.
+    /// </summary>
+    public async Task<bool> EnsureAutoBindPoliciesAsync(IReadOnlyList<UsbHardwareId> hardwareIds, CancellationToken ct = default)
     {
         var listResult = await ProcessRunner.RunAsync(executablePath, ["policy", "list"], ct).ConfigureAwait(false);
-        if (listResult.Succeeded && PolicyAlreadyExists(listResult.StdOut, hardwareId))
+        var existingPolicyText = listResult.Succeeded ? listResult.StdOut : string.Empty;
+
+        var missing = hardwareIds.Where(id => !PolicyAlreadyExists(existingPolicyText, id)).ToList();
+        if (missing.Count == 0)
         {
             return true;
         }
 
-        string[] addArgs = ["policy", "add", "--effect", "Allow", "--operation", "AutoBind", "--hardware-id", hardwareId.ToString()];
+        var stillMissing = new List<UsbHardwareId>();
+        foreach (var id in missing)
+        {
+            var addResult = await ProcessRunner.RunAsync(executablePath, PolicyAddArgs(id), ct).ConfigureAwait(false);
+            if (!addResult.Succeeded)
+            {
+                stillMissing.Add(id);
+            }
+        }
 
-        var addResult = await ProcessRunner.RunAsync(executablePath, addArgs, ct).ConfigureAwait(false);
-        if (addResult.Succeeded)
+        if (stillMissing.Count == 0)
         {
             return true;
         }
 
         // `policy add` requires Administrator rights; this is the one operation LogiSteam ever
-        // needs elevated, and only the first time it's missing -- one UAC prompt, not a
-        // requirement to run the whole tray app elevated on every launch.
-        var elevatedExitCode = await ProcessRunner.RunElevatedAsync(executablePath, addArgs, ct).ConfigureAwait(false);
+        // needs elevated, and only the first time each persona is missing -- batched into one UAC
+        // prompt covering every still-missing persona at once, not a requirement to run the whole
+        // tray app elevated on every launch.
+        var elevatedExitCode = await ProcessRunner.RunElevatedBatchAsync(
+            executablePath, stillMissing.Select(PolicyAddArgs), ct).ConfigureAwait(false);
         return elevatedExitCode == 0;
     }
+
+    private static string[] PolicyAddArgs(UsbHardwareId hardwareId) =>
+        ["policy", "add", "--effect", "Allow", "--operation", "AutoBind", "--hardware-id", hardwareId.ToString()];
 
     /// <summary>
     /// Best-effort text scan of `usbipd policy list` output for an existing AutoBind rule

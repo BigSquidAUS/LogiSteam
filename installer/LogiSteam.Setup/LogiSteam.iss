@@ -41,8 +41,12 @@ Source: "..\..\publish\WheelSide\*"; DestDir: "{app}"; Flags: recursesubdirs ign
 Source: "..\..\publish\GameSide\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion; Components: gameside
 Source: "..\vendor\{#UsbipdWinInstaller}"; DestDir: "{tmp}"; Flags: dontcopy deleteafterinstall; Components: wheelside
 Source: "..\vendor\{#UsbipWin2Installer}"; DestDir: "{tmp}"; Flags: dontcopy deleteafterinstall; Components: gameside
+Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\licenses\*"; DestDir: "{app}\licenses"; Flags: recursesubdirs ignoreversion
 
 [Tasks]
+Name: "desktopicon"; Description: "Create a desktop icon"; GroupDescription: "Additional icons:"
 Name: "startupshortcut"; Description: "Start LogiSteam automatically when Windows starts"; GroupDescription: "Startup:"
 Name: "launchafterinstall"; Description: "Launch LogiSteam now"; GroupDescription: "Additional tasks:"; Flags: unchecked
 
@@ -52,6 +56,8 @@ Name: "{group}\LogiSteam Game Side"; Filename: "{app}\{#GameExeName}"; Component
 Name: "{group}\Uninstall LogiSteam"; Filename: "{uninstallexe}"
 Name: "{userstartup}\LogiSteam Wheel Side"; Filename: "{app}\{#WheelExeName}"; Tasks: startupshortcut; Components: wheelside
 Name: "{userstartup}\LogiSteam Game Side"; Filename: "{app}\{#GameExeName}"; Tasks: startupshortcut; Components: gameside
+Name: "{autodesktop}\LogiSteam Wheel Side"; Filename: "{app}\{#WheelExeName}"; Tasks: desktopicon; Components: wheelside
+Name: "{autodesktop}\LogiSteam Game Side"; Filename: "{app}\{#GameExeName}"; Tasks: desktopicon; Components: gameside
 
 [Run]
 Filename: "msiexec.exe"; Parameters: "/i ""{tmp}\{#UsbipdWinInstaller}"" /quiet /norestart"; \

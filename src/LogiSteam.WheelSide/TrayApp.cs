@@ -33,6 +33,7 @@ public sealed class TrayApp : ApplicationContext
 
     private WheelDeviceWatcher? _watcher;
     private BeaconBroadcaster? _broadcaster;
+    private WheelSideDiagnosticsForm? _diagnosticsForm;
     private SelectedDevice? _selectedDevice;
     private UsbipdDevice? _currentDevice;
     private DiscoveredGamePc? _lastAck;
@@ -48,12 +49,13 @@ public sealed class TrayApp : ApplicationContext
         _uiContext = SynchronizationContext.Current
             ?? throw new InvalidOperationException("TrayApp must be constructed on the UI thread.");
 
-        _inventoryLogger = new UsbDeviceInventoryLogger(() => _selectedDevice?.HardwareId);
+        _inventoryLogger = new UsbDeviceInventoryLogger(id => _selectedDevice?.Matches(id) ?? false);
         _diagnosticsServer = new RemoteDiagnosticsServer(DiagnosticsPort.WheelSide, BuildDiagnosticsSnapshotJson);
 
         _statusMenuItem = new ToolStripMenuItem("Starting...") { Enabled = false };
         _selectDeviceMenuItem = new ToolStripMenuItem("Select USB Device...", null, (_, _) => OpenDevicePicker());
         var openUsbLogMenuItem = new ToolStripMenuItem("Open USB Device Log", null, (_, _) => OpenUsbLog());
+        var openDiagnosticsMenuItem = new ToolStripMenuItem("Open Diagnostics...", null, (_, _) => OpenDiagnostics());
         var exitMenuItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitApp());
 
         var menu = new ContextMenuStrip();
@@ -61,6 +63,7 @@ public sealed class TrayApp : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_selectDeviceMenuItem);
         menu.Items.Add(openUsbLogMenuItem);
+        menu.Items.Add(openDiagnosticsMenuItem);
         menu.Items.Add(exitMenuItem);
 
         _notifyIcon = new NotifyIcon
@@ -89,11 +92,35 @@ public sealed class TrayApp : ApplicationContext
         }
         else
         {
-            SetStatus(new TrayStatus("No device selected - pick your wheel now", TrayStatusLevel.Warning));
-            OpenDevicePicker();
+            var profile = WheelAutoDetector.DetectFirstMatch(SafeEnumerateUsbDevices());
+            if (profile is not null)
+            {
+                // Auto-detected a known wheel model -- select and persist it silently, exactly as
+                // if the user had picked it manually, with zero dialogs shown.
+                _selectedDevice = SelectedDevice.FromProfile(profile);
+                _deviceStore.Save(_selectedDevice);
+                StartWatchingSelectedDevice();
+            }
+            else
+            {
+                SetStatus(new TrayStatus("No device selected - pick your wheel now", TrayStatusLevel.Warning));
+                OpenDevicePicker();
+            }
         }
 
         _ = RefreshAsync();
+    }
+
+    private static IReadOnlyList<UsbDeviceInfo> SafeEnumerateUsbDevices()
+    {
+        try
+        {
+            return UsbDeviceEnumerator.EnumeratePresentDevices();
+        }
+        catch (ManagementException)
+        {
+            return [];
+        }
     }
 
     private void OpenUsbLog()
@@ -115,9 +142,21 @@ public sealed class TrayApp : ApplicationContext
         }
     }
 
+    private void OpenDiagnostics()
+    {
+        if (_diagnosticsForm is { IsDisposed: false })
+        {
+            _diagnosticsForm.Activate();
+            return;
+        }
+
+        _diagnosticsForm = new WheelSideDiagnosticsForm(BuildDiagnosticsSnapshotJson, () => _selectedDevice?.HardwareIds ?? []);
+        _diagnosticsForm.Show();
+    }
+
     private void OpenDevicePicker()
     {
-        using var picker = new DevicePickerForm(_selectedDevice?.HardwareId);
+        using var picker = new DevicePickerForm(_selectedDevice?.HardwareIds.FirstOrDefault());
         if (picker.ShowDialog() != DialogResult.OK || picker.SelectedDevice is null)
         {
             return;
@@ -143,9 +182,7 @@ public sealed class TrayApp : ApplicationContext
             return;
         }
 
-        var hardwareId = _selectedDevice.HardwareId;
-
-        _watcher = new WheelDeviceWatcher(hardwareId);
+        _watcher = new WheelDeviceWatcher(_selectedDevice.HardwareIds);
         _watcher.DeviceArrived += () => _uiContext.Post(_ => RefreshNow(), null);
         _watcher.DeviceRemoved += () => _uiContext.Post(_ => RefreshNow(), null);
         _watcher.Start();
@@ -159,8 +196,7 @@ public sealed class TrayApp : ApplicationContext
     private BeaconMessage? BuildBeaconMessage()
     {
         var device = _currentDevice;
-        var selected = _selectedDevice;
-        if (device?.BusId is null || selected is null)
+        if (device?.BusId is null || device.HardwareId is not { } liveHardwareId)
         {
             return null;
         }
@@ -169,8 +205,11 @@ public sealed class TrayApp : ApplicationContext
         {
             HostName = Environment.MachineName,
             BusId = device.BusId,
-            VendorId = $"{selected.Vendor:x4}",
-            ProductId = $"{selected.Product:x4}",
+            // Derived from the device that's actually live right now (device.HardwareId, parsed
+            // from usbipd state's InstanceId), not the originally-selected id -- a mode switch
+            // can mean a different persona than the one first selected is the one that's live.
+            VendorId = $"{liveHardwareId.Vendor:x4}",
+            ProductId = $"{liveHardwareId.Product:x4}",
             Shared = device.IsShared,
         };
     }
@@ -185,6 +224,19 @@ public sealed class TrayApp : ApplicationContext
         _refreshInProgress = true;
         try
         {
+            var reconciled = WheelAutoDetector.ReconcileSelection(_selectedDevice, SafeEnumerateUsbDevices());
+            if (reconciled is not null && reconciled != _selectedDevice)
+            {
+                // Silent, no-dialog self-heal -- same UX as first-run auto-detect: either a stale
+                // selection's ids stopped matching anything live and a known model was found to
+                // replace it, or a legacy single-persona pick got upgraded to its full known set.
+                _selectedDevice = reconciled;
+                _deviceStore.Save(_selectedDevice);
+                _policyEnsured = false;
+                _currentDevice = null;
+                StartWatchingSelectedDevice();
+            }
+
             var selected = _selectedDevice;
             if (selected is null)
             {
@@ -194,7 +246,7 @@ public sealed class TrayApp : ApplicationContext
 
             if (!_policyEnsured)
             {
-                _policyEnsured = await TryEnsurePolicyAsync(selected.HardwareId);
+                _policyEnsured = await TryEnsurePolicyAsync(selected.HardwareIds);
             }
 
             // Deliberately NOT gated on our own WheelDeviceWatcher/WMI presence check here.
@@ -212,7 +264,7 @@ public sealed class TrayApp : ApplicationContext
             // the device through binding/stub-driver changes, so it alone is the presence signal.
             try
             {
-                _currentDevice = await _usbipd.FindDeviceAsync(selected.HardwareId);
+                _currentDevice = await _usbipd.FindDeviceAsync(selected.HardwareIds);
             }
             catch (UsbipdCommandException ex)
             {
@@ -229,11 +281,13 @@ public sealed class TrayApp : ApplicationContext
 
             if (_currentDevice is null)
             {
-                SetStatus(new TrayStatus($"Waiting for {selected.Description} to be plugged in...", TrayStatusLevel.Idle));
+                SetStatus(new TrayStatus(
+                    $"Waiting for {selected.DisplayName} to be plugged in... - not your wheel? Right-click > Select USB Device...",
+                    TrayStatusLevel.Idle));
             }
             else if (!_policyEnsured)
             {
-                SetStatus(new TrayStatus($"{selected.Description} detected - AutoBind policy could not be registered (run as Administrator once)", TrayStatusLevel.Warning));
+                SetStatus(new TrayStatus($"{selected.DisplayName} detected - AutoBind policy could not be registered (run as Administrator once)", TrayStatusLevel.Warning));
             }
             else
             {
@@ -243,8 +297,8 @@ public sealed class TrayApp : ApplicationContext
                 // not an error. Only report "Sharing"/Connected once IsShared AND an ack saying
                 // "attached" both confirm the whole path actually worked end to end.
                 var baseText = _currentDevice.IsShared
-                    ? $"Sharing {selected.Description} (bus {_currentDevice.BusId})"
-                    : $"{selected.Description} ready (bus {_currentDevice.BusId}) - not yet bound";
+                    ? $"Sharing {selected.DisplayName} (bus {_currentDevice.BusId})"
+                    : $"{selected.DisplayName} ready (bus {_currentDevice.BusId}) - not yet bound";
 
                 if (_lastAck is null)
                 {
@@ -264,11 +318,11 @@ public sealed class TrayApp : ApplicationContext
         }
     }
 
-    private async Task<bool> TryEnsurePolicyAsync(UsbHardwareId hardwareId)
+    private async Task<bool> TryEnsurePolicyAsync(IReadOnlyList<UsbHardwareId> hardwareIds)
     {
         try
         {
-            return await _usbipd.EnsureAutoBindPolicyAsync(hardwareId);
+            return await _usbipd.EnsureAutoBindPoliciesAsync(hardwareIds);
         }
         catch (Win32Exception)
         {
@@ -293,23 +347,16 @@ public sealed class TrayApp : ApplicationContext
     /// live re-enumeration of all USB devices at query time, not just the cached state from the
     /// last 2-second refresh tick, so a remote troubleshooter always sees current reality.
     /// </summary>
-    private string BuildDiagnosticsSnapshotJson()
+    internal string BuildDiagnosticsSnapshotJson()
     {
-        IReadOnlyList<UsbDeviceInfo> liveDevices;
-        try
-        {
-            liveDevices = UsbDeviceEnumerator.EnumeratePresentDevices();
-        }
-        catch (ManagementException)
-        {
-            liveDevices = [];
-        }
+        var liveDevices = SafeEnumerateUsbDevices();
 
         var snapshot = new WheelSideDiagnosticsSnapshot
         {
             HostName = Environment.MachineName,
-            SelectedHardwareId = _selectedDevice?.HardwareId.ToString(),
-            SelectedDescription = _selectedDevice?.Description,
+            SelectedDisplayName = _selectedDevice?.DisplayName,
+            SelectedHardwareIds = _selectedDevice?.HardwareIds.Select(id => id.ToString()).ToList() ?? [],
+            CurrentlyLiveHardwareId = _currentDevice?.HardwareId?.ToString(),
             StatusText = _currentStatus.Text,
             StatusLevel = _currentStatus.Level.ToString(),
             PolicyEnsured = _policyEnsured,
@@ -345,6 +392,7 @@ public sealed class TrayApp : ApplicationContext
         _refreshTimer.Stop();
         _watcher?.Dispose();
         _broadcaster?.Dispose();
+        _diagnosticsForm?.Dispose();
         _ackListener.Dispose();
         _inventoryLogger.Dispose();
         _diagnosticsServer.Dispose();

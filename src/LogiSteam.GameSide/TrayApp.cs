@@ -18,6 +18,7 @@ public sealed class TrayApp : ApplicationContext
     private readonly RemoteDiagnosticsServer _diagnosticsServer;
     private readonly SynchronizationContext _uiContext;
 
+    private GameSideDiagnosticsForm? _diagnosticsForm;
     private TrayStatus _currentStatus = new("Starting...", TrayStatusLevel.Idle);
 
     public TrayApp()
@@ -30,12 +31,14 @@ public sealed class TrayApp : ApplicationContext
 
         _statusMenuItem = new ToolStripMenuItem("Starting...") { Enabled = false };
         var detachMenuItem = new ToolStripMenuItem("Detach now", null, async (_, _) => await _attachManager.DetachForShutdownAsync());
+        var openDiagnosticsMenuItem = new ToolStripMenuItem("Open Diagnostics...", null, (_, _) => OpenDiagnostics());
         var exitMenuItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitApp());
 
         var menu = new ContextMenuStrip();
         menu.Items.Add(_statusMenuItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(detachMenuItem);
+        menu.Items.Add(openDiagnosticsMenuItem);
         menu.Items.Add(exitMenuItem);
 
         _notifyIcon = new NotifyIcon
@@ -51,6 +54,18 @@ public sealed class TrayApp : ApplicationContext
         _diagnosticsServer.Start();
     }
 
+    private void OpenDiagnostics()
+    {
+        if (_diagnosticsForm is { IsDisposed: false })
+        {
+            _diagnosticsForm.Activate();
+            return;
+        }
+
+        _diagnosticsForm = new GameSideDiagnosticsForm(BuildDiagnosticsSnapshotJson, () => _listener.CurrentlyVisible.FirstOrDefault()?.Address.ToString());
+        _diagnosticsForm.Show();
+    }
+
     private void SetStatus(TrayStatus status)
     {
         _currentStatus = status;
@@ -59,7 +74,7 @@ public sealed class TrayApp : ApplicationContext
         _notifyIcon.Icon = TrayIconPalette.GetIcon(status.Level);
     }
 
-    private string BuildDiagnosticsSnapshotJson()
+    internal string BuildDiagnosticsSnapshotJson()
     {
         var snapshot = new GameSideDiagnosticsSnapshot
         {
@@ -82,6 +97,7 @@ public sealed class TrayApp : ApplicationContext
     {
         await _attachManager.DetachForShutdownAsync();
         _listener.Dispose();
+        _diagnosticsForm?.Dispose();
         _diagnosticsServer.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();

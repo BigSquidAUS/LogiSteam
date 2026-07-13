@@ -47,4 +47,19 @@ public class WheelDeviceWatcherTests
 
         Assert.DoesNotContain(needle, unrelatedDeviceId, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void BuildDeviceIdNeedle_AppliedToAMultiPersonaProfile_MatchesWhicheverPersonaIsLive()
+    {
+        // WheelDeviceWatcher now takes a set of hardware ids (a manual pick is one; an
+        // auto-detected profile is several personas). The watcher's "is any present" check is
+        // just BuildDeviceIdNeedle applied per id -- confirm that holds for a real multi-persona
+        // profile: whichever persona is actually live, its needle (and only its needle) matches.
+        var ps3Needle = WheelDeviceWatcher.BuildDeviceIdNeedle(new UsbHardwareId(0x046D, 0xC24F));
+        var ps4Needle = WheelDeviceWatcher.BuildDeviceIdNeedle(new UsbHardwareId(0x046D, 0xC260));
+        const string liveAsPs4DeviceId = @"USB\VID_046D&PID_C260&REV_2411&MI_00";
+
+        Assert.Contains(ps4Needle, liveAsPs4DeviceId, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(ps3Needle, liveAsPs4DeviceId, StringComparison.OrdinalIgnoreCase);
+    }
 }

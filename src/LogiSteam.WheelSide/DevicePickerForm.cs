@@ -86,7 +86,14 @@ public sealed class DevicePickerForm : Form
         IReadOnlyList<UsbDeviceInfo> devices;
         try
         {
-            devices = UsbDeviceEnumerator.EnumeratePresentDevices();
+            // Known catalog matches sort first (these are the ones auto-detect would have picked
+            // silently if it recognized the current state -- e.g. a legacy/stale selection or a
+            // persona that arrived after this window opened), then the existing likely-wheel
+            // heuristic for anything else.
+            devices = UsbDeviceEnumerator.EnumeratePresentDevices()
+                .OrderBy(d => KnownWheelProfiles.TryGetDisplayName(d.HardwareId, out _) ? 0 : IsLikelyWheel(d) ? 1 : 2)
+                .ThenBy(d => d.Description, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -96,7 +103,14 @@ public sealed class DevicePickerForm : Form
 
         foreach (var device in devices)
         {
-            var item = new ListViewItem(device.Description) { Tag = device };
+            // A device Windows can only describe with something confusing ("Logitech USB Input
+            // Device") gets its known model name shown first, with the raw description kept
+            // alongside so it can still be cross-checked against Device Manager if needed.
+            var label = KnownWheelProfiles.TryGetDisplayName(device.HardwareId, out var displayName)
+                ? $"{displayName} ({device.Description})"
+                : device.Description;
+
+            var item = new ListViewItem(label) { Tag = device };
             item.SubItems.Add(device.HardwareId.ToString());
             _list.Items.Add(item);
 
@@ -107,6 +121,17 @@ public sealed class DevicePickerForm : Form
             }
         }
     }
+
+    private static readonly string[] WheelKeywords = ["wheel", "racing", "driving force", "g29", "g hub"];
+
+    /// <summary>
+    /// Heuristic used only to sort the manual-fallback picker's list, never to auto-select --
+    /// Logitech vendor id, or a description containing a wheel-ish keyword (which usbipd-win's
+    /// driver-bound friendly names often do, e.g. "Logitech G HUB G29 Driving Force Racing Wheel USB").
+    /// </summary>
+    private static bool IsLikelyWheel(UsbDeviceInfo device) =>
+        device.HardwareId.Vendor == UsbHardwareId.LogitechVendorId
+        || WheelKeywords.Any(keyword => device.Description.Contains(keyword, StringComparison.OrdinalIgnoreCase));
 
     private void AcceptSelection()
     {

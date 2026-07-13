@@ -55,9 +55,17 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
         var host = pc.Address.ToString();
         if (_attached is not null && _attachedHost == host)
         {
-            // Already attached to this Wheel PC; nothing to do until it disappears or its bus id changes.
+            // Already attached to this Wheel PC; nothing to do until it disappears, its bus id
+            // changes, or the local attachment turns out to have silently died (sleep/resume, a
+            // driver hiccup) -- the beacon alone can't tell us that, since the Wheel PC still
+            // sees its side as fine.
             if (_attached.BusId != pc.Beacon.BusId)
             {
+                await ReattachAsync(pc, host).ConfigureAwait(false);
+            }
+            else if (!await IsAttachmentAliveAsync().ConfigureAwait(false))
+            {
+                StatusChanged?.Invoke(new TrayStatus("Attachment lost - reattaching...", TrayStatusLevel.Warning));
                 await ReattachAsync(pc, host).ConfigureAwait(false);
             }
 
@@ -85,6 +93,34 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
         }
 
         await AckAsync(pc.Address).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Confirms the port we think we're attached to is still actually imported locally. A query
+    /// failure fails open (treated as "still alive") rather than triggering a reattach itself --
+    /// a transient `usbip port` hiccup shouldn't cause detach/reattach thrashing on its own; only
+    /// a successful query that genuinely omits our port is trusted as "it died."
+    /// </summary>
+    private async Task<bool> IsAttachmentAliveAsync()
+    {
+        if (_attached is null)
+        {
+            return true;
+        }
+
+        try
+        {
+            var ports = await usbip.ListPortsAsync().ConfigureAwait(false);
+            return ports.Contains(_attached.Port);
+        }
+        catch (UsbipCommandException)
+        {
+            return true;
+        }
+        catch (Win32Exception)
+        {
+            return true;
+        }
     }
 
     private async Task ReattachAsync(DiscoveredWheelPc pc, string host)

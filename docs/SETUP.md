@@ -40,26 +40,51 @@ only ever plays one role; "Wheel PC" is the default selection. Steps:
 2. One UAC prompt is expected either way (the installer runs elevated, since both prerequisite
    drivers need Administrator rights to install regardless of who triggers it).
 3. Confirm both PCs are on the same LAN subnet, wired connection recommended.
-4. The wizard offers a "start automatically when Windows starts" checkbox and a "launch now"
-   checkbox, so there's nothing left to configure by hand after it finishes.
-5. The first time `LogiSteam.WheelSide` *runs*, it opens a device picker automatically since no
-   device has been selected yet -- see "Selecting your wheel" below.
-6. Once a device is selected, `LogiSteam.WheelSide` also registers a one-time "AutoBind" policy
-   for that device's hardware id with `usbipd-win` -- if that wasn't already done as part of the
-   install, expect one more brief UAC prompt at that point; it is not required on subsequent
-   launches, since the policy persists.
+4. The wizard offers a "start automatically when Windows starts" checkbox, a "launch now"
+   checkbox, and a "Create a desktop icon" checkbox (checked by default) for each role, so
+   there's nothing left to configure by hand after it finishes.
+5. The first time `LogiSteam.WheelSide` *runs*, it first tries to auto-detect a known wheel model
+   from the currently-plugged-in devices -- see "Selecting your wheel" below. It only opens the
+   manual device picker if nothing recognized is plugged in.
+6. Once a device is selected (automatically or manually), `LogiSteam.WheelSide` also registers a
+   one-time "AutoBind" policy for that device's hardware id(s) with `usbipd-win` -- if that wasn't
+   already done as part of the install, expect one more brief UAC prompt at that point (a single
+   prompt even for a multi-persona wheel like the G29, which registers all of its known personas
+   in one batched elevation); it is not required on subsequent launches, since the policy persists.
 
 ## Selecting your wheel
 
-`LogiSteam.WheelSide` no longer assumes a fixed G29 VID/PID -- that assumption has been wrong
-twice in practice (a stale value from a third-party lookup site, then a real per-unit/firmware
-difference). Instead, right-click the tray icon and choose **"Select USB Device..."** (or just
-wait for it to pop up automatically on first run) to get a list of every USB device Windows
-currently sees, deduplicated so one physical device shows as one entry even if it has multiple
-internal USB interfaces. Pick the one that's your wheel; the choice is remembered
-(`%LOCALAPPDATA%\LogiSteam\wheelside-device.json`) so you only do this once. If you don't see your
-wheel in the list, unplug/replug it and click **Refresh** -- and check Device Manager's "Hardware
-Ids" for that device (Details tab) if you want to confirm what LogiSteam should be matching.
+`LogiSteam.WheelSide` no longer assumes a single fixed VID/PID for "the" G29 -- that assumption
+was wrong twice in practice (a stale value from a third-party lookup site, then a real
+per-unit/firmware difference), and live debugging showed why: the G29's PS3/PS4 mode switch and
+native/generic mode make the *same physical wheel* enumerate as three different USB personas.
+So a recognized wheel is now a small built-in catalog of known models, each backed by every
+confirmed persona's hardware id (see `KnownWheelProfiles` in the source for the current list).
+
+- **Automatic (default):** on first run, `LogiSteam.WheelSide` checks currently-plugged-in devices
+  against that catalog and silently selects a match -- no dialog, no user action. The tray status
+  then reads e.g. "Sharing Logitech G29 (bus 3-1)" using the model's stable name, regardless of
+  which persona happens to be live underneath at any given moment.
+- **Manual override:** if nothing in the catalog matches (an unrecognized wheel model, or any
+  other USB device you want to share), right-click the tray icon and choose **"Select USB
+  Device..."** to get a list of every USB device Windows currently sees, deduplicated so one
+  physical device shows as one entry even if it has multiple internal USB interfaces. Likely-wheel
+  candidates (Logitech vendor id, or a description mentioning "wheel"/"racing"/"driving force") are
+  sorted to the top to make manual selection easier. Pick the one that's yours; the choice is
+  remembered (`%LOCALAPPDATA%\LogiSteam\wheelside-device.json`) so you only do this once. If you
+  don't see your device in the list, unplug/replug it and click **Refresh** -- and check Device
+  Manager's "Hardware Ids" for that device (Details tab) if you want to confirm what LogiSteam
+  should be matching. This override is always available from the tray menu, even after an
+  automatic match, if you ever need to change the selection.
+
+**Adding a new confirmed wheel model to the catalog** (maintainers): only add a profile once
+you've directly observed its hardware id(s) on a real unit -- e.g. via Device Manager's "Hardware
+Ids" (Details tab) or a log line from `UsbDeviceInventoryLogger` -- never from a third-party
+lookup site (that's the exact mistake that motivated moving away from hardcoded ids in the first
+place). Add a new `KnownWheelProfile` entry to `KnownWheelProfiles.All` in
+`src/LogiSteam.Common/DeviceDetection/KnownWheelProfiles.cs`, listing every persona you've
+confirmed for that model, then add a `KnownWheelProfilesTests.cs` regression guard the same way
+the existing G29 entry is guarded.
 
 ## Diagnosing connection flakiness
 
@@ -86,6 +111,22 @@ session without relaying copy-pasted output back and forth. Note this endpoint h
 authentication by design (a deliberate tradeoff for a private home LAN) -- it only exposes
 read-only status/device information, never anything sensitive, and there is no way to send
 commands back through it.
+
+Both apps also have a built-in **"Open Diagnostics..."** tray menu item, so most troubleshooting
+no longer needs a terminal at all:
+
+- **Connectivity** shows the same live JSON snapshot as the TCP endpoint above, auto-refreshing
+  every 2 seconds, with "Refresh Now" and "Copy to Clipboard" buttons. On `LogiSteam.GameSide`,
+  there's also a "Query Wheel PC" button (pre-filled with whichever Wheel PC it has last
+  discovered) that fetches and displays that machine's live snapshot inline -- the in-app
+  replacement for running `query-diagnostics.ps1` by hand.
+- **Input Test** lets you confirm raw wheel input is actually flowing: click "Start Test", then
+  move the wheel / press pedals and buttons -- each raw HID report received appears as a
+  timestamped hex line. On `LogiSteam.WheelSide` it tests your currently-selected wheel; on
+  `LogiSteam.GameSide` (which tracks the attached device by bus id/port rather than hardware id)
+  pick the device from the dropdown first. If nothing appears while a game controller is
+  connected and attached, that's a real problem worth investigating; a mouse or keyboard showing
+  nothing is expected, since Windows exclusively locks their pointer/keystroke HID collections.
 
 Building the installer yourself (only needed if you change the source): publish both apps with
 `dotnet publish` (see main `README.md`), then compile `installer/LogiSteam.Setup/LogiSteam.iss`
