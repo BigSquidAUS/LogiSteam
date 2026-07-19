@@ -12,8 +12,8 @@ namespace LogiSteam.Common.Discovery;
 public sealed class BeaconBroadcaster : IDisposable
 {
     private readonly Func<BeaconMessage?> _messageFactory;
-    private readonly UdpClient _client;
-    private readonly CancellationTokenSource _cts = new();
+    private UdpClient _client;
+    private CancellationTokenSource _cts = new();
     private Task? _loop;
 
     public BeaconBroadcaster(Func<BeaconMessage?> messageFactory)
@@ -91,7 +91,29 @@ public sealed class BeaconBroadcaster : IDisposable
         }
     }
 
+    /// <summary>
+    /// Tears down and recreates the underlying socket and broadcast loop in place -- recovers
+    /// from a system sleep/resume cycle, where the previously created UdpClient can be left
+    /// silently unable to send by a NIC that got power-cycled during suspend even though the
+    /// process itself survives untouched.
+    /// </summary>
+    public void Restart()
+    {
+        TearDown();
+        _cts.Dispose();
+        _cts = new CancellationTokenSource();
+        _client = new UdpClient { EnableBroadcast = true };
+        _loop = null;
+        Start();
+    }
+
     public void Dispose()
+    {
+        TearDown();
+        _cts.Dispose();
+    }
+
+    private void TearDown()
     {
         _cts.Cancel();
         try
@@ -104,6 +126,5 @@ public sealed class BeaconBroadcaster : IDisposable
         }
 
         _client.Dispose();
-        _cts.Dispose();
     }
 }

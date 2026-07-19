@@ -13,7 +13,7 @@ namespace LogiSteam.Common.Discovery;
 public sealed class AckListener : IDisposable
 {
     private readonly ConcurrentDictionary<IPAddress, DiscoveredGamePc> _seen = new();
-    private readonly CancellationTokenSource _cts = new();
+    private CancellationTokenSource _cts = new();
     private UdpClient? _client;
     private Task? _receiveLoop;
     private Task? _sweepLoop;
@@ -90,7 +90,29 @@ public sealed class AckListener : IDisposable
         }
     }
 
+    /// <summary>
+    /// Tears down and rebinds the underlying socket and receive/sweep loops in place, without
+    /// disturbing event subscribers -- recovers from a system sleep/resume cycle, where the
+    /// previously bound UdpClient can be left silently dead by a NIC that got power-cycled during
+    /// suspend even though the process itself, and everything subscribed to this listener,
+    /// survives untouched.
+    /// </summary>
+    public void Restart()
+    {
+        TearDown();
+        _cts.Dispose();
+        _cts = new CancellationTokenSource();
+        _client = null;
+        Start();
+    }
+
     public void Dispose()
+    {
+        TearDown();
+        _cts.Dispose();
+    }
+
+    private void TearDown()
     {
         _cts.Cancel();
         _client?.Close();
@@ -104,6 +126,5 @@ public sealed class AckListener : IDisposable
         }
 
         _client?.Dispose();
-        _cts.Dispose();
     }
 }

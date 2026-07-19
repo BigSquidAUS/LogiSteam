@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using LogiSteam.Common.Diagnostics;
 using LogiSteam.Common.Discovery;
 using LogiSteam.Common.Tray;
@@ -52,6 +53,27 @@ public sealed class TrayApp : ApplicationContext
         _attachManager.StatusChanged += status => _uiContext.Post(_ => SetStatus(status), null);
         _attachManager.Start();
         _diagnosticsServer.Start();
+
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+    }
+
+    /// <summary>
+    /// A sleep/resume cycle can leave the beacon listener's UdpClient silently dead -- Windows
+    /// often power-cycles the NIC during suspend, even though this process (and everything
+    /// subscribed to the listener, like AttachManager) survives untouched. Restarting the
+    /// listener's socket in place on resume is enough: AttachManager's existing attach-liveness
+    /// check (see AttachManager.IsAttachmentAliveAsync) already self-heals a dead local
+    /// attachment on the next beacon it receives, so simply getting beacons flowing again closes
+    /// the loop without needing any additional resume-specific recovery logic here.
+    /// </summary>
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume)
+        {
+            return;
+        }
+
+        _uiContext.Post(_ => _listener.Restart(), null);
     }
 
     private void OpenDiagnostics()
@@ -95,6 +117,7 @@ public sealed class TrayApp : ApplicationContext
 
     private async void ExitApp()
     {
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         await _attachManager.DetachForShutdownAsync();
         _listener.Dispose();
         _diagnosticsForm?.Dispose();

@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Management;
+using Microsoft.Win32;
 using LogiSteam.Common.Config;
 using LogiSteam.Common.Diagnostics;
 using LogiSteam.Common.Discovery;
@@ -80,6 +81,8 @@ public sealed class TrayApp : ApplicationContext
 
         _inventoryLogger.Start();
         _diagnosticsServer.Start();
+
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
         _refreshTimer = new System.Windows.Forms.Timer { Interval = 2000 };
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
@@ -387,8 +390,29 @@ public sealed class TrayApp : ApplicationContext
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : text[..(maxLength - 1)] + "…";
 
+    /// <summary>
+    /// A sleep/resume cycle can leave the beacon broadcaster's and ack listener's UdpClients
+    /// silently dead -- Windows often power-cycles the NIC during suspend, even though this
+    /// process survives untouched. Restarting them in place on resume is enough to get the whole
+    /// discovery/ack loop flowing again with no further resume-specific recovery logic needed.
+    /// </summary>
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume)
+        {
+            return;
+        }
+
+        _uiContext.Post(_ =>
+        {
+            _ackListener.Restart();
+            _broadcaster?.Restart();
+        }, null);
+    }
+
     private void ExitApp()
     {
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _refreshTimer.Stop();
         _watcher?.Dispose();
         _broadcaster?.Dispose();
