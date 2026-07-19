@@ -80,12 +80,11 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
 
         try
         {
-            if (_attached is not null)
+            var clearToAttach = _attached is null || await DetachInternalAsync().ConfigureAwait(false);
+            if (clearToAttach)
             {
-                await DetachInternalAsync().ConfigureAwait(false);
+                await AttachInternalAsync(pc, host).ConfigureAwait(false);
             }
-
-            await AttachInternalAsync(pc, host).ConfigureAwait(false);
         }
         finally
         {
@@ -128,8 +127,10 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await DetachInternalAsync().ConfigureAwait(false);
-            await AttachInternalAsync(pc, host).ConfigureAwait(false);
+            if (await DetachInternalAsync().ConfigureAwait(false))
+            {
+                await AttachInternalAsync(pc, host).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -184,16 +185,22 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
         }
     }
 
-    private async Task DetachInternalAsync()
+    /// <returns>
+    /// True once the local attachment is confirmed clear (or there was none to begin with); false
+    /// if a real attachment is still occupying the port, so callers should not attempt a fresh
+    /// attach this cycle.
+    /// </returns>
+    private async Task<bool> DetachInternalAsync()
     {
         if (_attached is null)
         {
-            return;
+            return true;
         }
 
+        var port = _attached.Port;
         try
         {
-            await usbip.DetachAsync(_attached.Port).ConfigureAwait(false);
+            await usbip.DetachAsync(port).ConfigureAwait(false);
         }
         catch (UsbipCommandException)
         {
@@ -204,8 +211,42 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
             // usbip.exe missing; nothing more we can do here.
         }
 
+        // usbip.exe's detach reports failure via its return value, not an exception -- confirm the
+        // port is actually gone before forgetting about it. Otherwise a detach that silently fails
+        // leaves a real local attachment orphaned from our own tracking, and every subsequent
+        // attach attempt then fails with "device busy (already exported)" against a "ghost"
+        // attachment we no longer know we have.
+        if (await IsPortStillImportedAsync(port).ConfigureAwait(false))
+        {
+            return false;
+        }
+
         _attached = null;
         _attachedHost = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Used only to confirm a detach actually took effect. Unlike <see cref="IsAttachmentAliveAsync"/>,
+    /// a query failure here fails toward "assume it's clear" (matches this method's pre-existing,
+    /// long-standing behavior for the common case) -- if that assumption is wrong, the worst case is
+    /// the same bounded attach-retry-with-cooldown failure this fix is closing, not a crash.
+    /// </summary>
+    private async Task<bool> IsPortStillImportedAsync(int port)
+    {
+        try
+        {
+            var ports = await usbip.ListPortsAsync().ConfigureAwait(false);
+            return ports.Contains(port);
+        }
+        catch (UsbipCommandException)
+        {
+            return false;
+        }
+        catch (Win32Exception)
+        {
+            return false;
+        }
     }
 
     private Task AckAsync(IPAddress wheelPcAddress) =>
