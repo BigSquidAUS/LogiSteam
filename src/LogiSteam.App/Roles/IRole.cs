@@ -25,6 +25,9 @@ internal interface IRole
 
     DashboardState BuildDashboard();
 
+    /// <summary>The PC at the other end, if one is currently connected, and the LogiSteam version it reported (null before 2.1).</summary>
+    (string Name, string? Version)? Peer { get; }
+
     IReadOnlyList<RoleAction> AdvancedActions { get; }
 
     /// <summary>Handles the button on a warning this role raised (see <see cref="DashboardWarning.Id"/>).</summary>

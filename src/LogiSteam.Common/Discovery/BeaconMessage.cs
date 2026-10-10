@@ -37,6 +37,10 @@ public sealed class BeaconMessage
     [JsonPropertyName("gHubRunning")]
     public bool? GHubRunning { get; init; }
 
+    /// <summary>The Wheel PC's LogiSteam version ("2.1.0"). Null from a version before 2.1.</summary>
+    [JsonPropertyName("appVersion")]
+    public string? AppVersion { get; init; }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

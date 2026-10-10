@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Net;
 using LogiSteam.Common.Discovery;
 using LogiSteam.Common.GHub;
+using LogiSteam.Common.Updates;
 using LogiSteam.Common.Tray;
 using LogiSteam.Common.UsbipInterop;
 
@@ -256,6 +257,7 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
             HostName = Environment.MachineName,
             Attached = _attachedHost == wheelPcAddress.ToString(),
             GHubRunning = gHub.IsRunning,
+            AppVersion = AppVersion.Current,
         });
 
     private static string WheelName(DiscoveredWheelPc pc) => pc.Beacon.DeviceName ?? "wheel";

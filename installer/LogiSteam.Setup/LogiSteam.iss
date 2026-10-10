@@ -10,7 +10,7 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\LogiSteam.Setup\LogiSteam.iss
 
 #define MyAppName "LogiSteam"
-#define MyAppVersion "2.0.1"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "LogiSteam"
 #define AppExeName "LogiSteam.exe"
 #define UsbipdWinInstaller "usbipd-win_5.3.0_x64.msi"
@@ -86,6 +86,9 @@ Filename: "netsh.exe"; Parameters: "advfirewall firewall add rule name=""LogiSte
 Filename: "netsh.exe"; Parameters: "advfirewall firewall add rule name=""LogiSteam GameSide Diagnostics (TCP 35897 in)"" dir=in action=allow protocol=TCP localport=35897"; \
     Flags: runhidden waituntilterminated; StatusMsg: "Adding firewall rules for LogiSteam..."
 Filename: "{app}\{#AppExeName}"; Description: "Launch LogiSteam"; Flags: nowait postinstall skipifsilent
+; An in-app update runs this installer with /SILENT, where the checkbox above never shows:
+; start the new version again, as the signed-in user rather than as Administrator.
+Filename: "{app}\{#AppExeName}"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 [UninstallRun]
 Filename: "taskkill.exe"; Parameters: "/F /IM {#AppExeName}"; Flags: runhidden waituntilterminated; RunOnceId: "StopLogiSteam"

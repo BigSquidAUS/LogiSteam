@@ -79,9 +79,7 @@ internal sealed class GameRole : IRole
 
     public DashboardState BuildDashboard()
     {
-        // The Wheel PC we're attached to if any, otherwise whichever one is currently visible.
-        var visible = _listener.CurrentlyVisible;
-        var wheelPc = visible.FirstOrDefault(pc => pc.Address.ToString() == _attachManager.AttachedHost) ?? visible.FirstOrDefault();
+        var wheelPc = CurrentWheelPc();
         var attached = _attachManager.CurrentAttachment is not null;
 
         return GameSideDashboard.Build(
@@ -96,6 +94,16 @@ internal sealed class GameRole : IRole
                 RunningOnPeer: wheelPc?.Beacon.GHubRunning,
                 PeerName: wheelPc?.Beacon.HostName,
                 RequiredOnPeer: _requireGHubOnWheelPc()));
+    }
+
+    public (string Name, string? Version)? Peer =>
+        CurrentWheelPc() is { } pc ? (pc.Beacon.HostName, pc.Beacon.AppVersion) : null;
+
+    // The Wheel PC we're attached to if any, otherwise whichever one is currently visible.
+    private DiscoveredWheelPc? CurrentWheelPc()
+    {
+        var visible = _listener.CurrentlyVisible;
+        return visible.FirstOrDefault(pc => pc.Address.ToString() == _attachManager.AttachedHost) ?? visible.FirstOrDefault();
     }
 
     public void OnWarningAction(string warningId)

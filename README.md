@@ -38,6 +38,8 @@ the gaming PC sees the actual wheel: full steering resolution, pedals, shifter a
   red: broken).
 - **Warns you when Logitech G HUB isn't running** on the gaming PC, with a button to open it.
 - **Recovers on its own** after sleep, a network blip, or a mode switch on the wheel.
+- **Keeps both PCs on the same version.** When a new version is out, or you install one on
+  either PC, the other shows an **Update** button that downloads and installs it for you.
 
 ## Download
 
@@ -99,6 +101,12 @@ list. Any USB device can be shared this way.
 - **Use it on a network you trust.** The Game PC connects to whatever wheel a LogiSteam Wheel PC
   on your network offers; there is no pairing step. LogiSteam also answers read-only status
   queries from your local network for troubleshooting.
+
+- **Updates come only from this GitHub page.** LogiSteam checks
+  [the latest release](https://github.com/BigSquidAUS/LogiSteam/releases/latest) a few times a
+  day and when your other PC reports a newer version. It never accepts an update from another
+  device on your network, verifies the download against its published checksum, and only
+  installs when you click Update. That check is the only time LogiSteam contacts the internet.
 
 ## Support the project
 

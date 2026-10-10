@@ -25,6 +25,10 @@ public sealed class AckMessage
     [JsonPropertyName("gHubRunning")]
     public bool? GHubRunning { get; init; }
 
+    /// <summary>The Game PC's LogiSteam version ("2.1.0"). Null from a version before 2.1.</summary>
+    [JsonPropertyName("appVersion")]
+    public string? AppVersion { get; init; }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

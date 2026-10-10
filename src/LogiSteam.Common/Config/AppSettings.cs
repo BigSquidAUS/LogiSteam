@@ -25,6 +25,9 @@ public sealed record AppSettings
     /// the wheel misbehaves without it.
     /// </summary>
     public bool RequireGHubOnWheelPc { get; init; }
+
+    /// <summary>How many times LogiSteam has been started on this PC (see <see cref="DonationPrompt"/>).</summary>
+    public int RunCount { get; init; }
 }
 
 /// <summary>Loads/saves <see cref="AppSettings"/> (%LOCALAPPDATA%\LogiSteam\settings.json).</summary>

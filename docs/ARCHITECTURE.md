@@ -198,3 +198,23 @@ FFB commands are periodic, latency-sensitive output reports, so this is a real r
 via the Phase 0 spike in `docs/SETUP.md` before depending on this for sim racing -- the
 automation in this repo cannot fix a fundamentally unworkable transport, only make a working one
 convenient.
+
+## Updates
+
+Both PCs need to run compatible versions, so each one tells the other its version in the
+beacon/ack (`appVersion`) and `UpdateNotices` turns the comparison into dashboard cards: "an
+update is available" (with an Update button) on the PC that is behind, and "the other PC is out
+of date" on the one that is ahead.
+
+The installer itself is only ever fetched from this project's GitHub releases (`UpdateChecker`):
+the app looks up the latest release at startup, every six hours, and promptly when the peer
+reports a version newer than any it knows about. A peer's version is treated purely as a hint to
+go and look. It is never the source of the file, because running a program handed over by
+whatever machine answers on the LAN would give any device on the network a way to execute code
+here. The download URL must be under this repository's release downloads, and the file is
+checked against the size and SHA-256 GitHub publishes for the asset before it is run.
+
+Installing is always started by the user clicking Update. It needs a Windows elevation prompt
+and drops the wheel for a few seconds, neither of which should happen unprompted mid-race. The
+app stops its role cleanly (detaching the wheel), runs the installer with `/SILENT`, and the
+installer restarts the new version as the signed-in user.

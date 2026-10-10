@@ -76,6 +76,42 @@ public class GHubDiscoveryFieldTests
     }
 }
 
+public class DonationPromptTests
+{
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, false)]
+    [InlineData(49, false)]
+    [InlineData(50, true)]
+    [InlineData(51, false)]
+    [InlineData(99, false)]
+    [InlineData(100, true)]
+    [InlineData(150, true)]
+    public void IsDue_OnEveryFiftiethLaunchOnly(int runCount, bool expected)
+    {
+        Assert.Equal(expected, DonationPrompt.IsDue(runCount));
+    }
+
+    [Fact]
+    public void RunCount_StartsAtZero_AndRoundTrips()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"logisteam-{Guid.NewGuid():N}.json");
+        try
+        {
+            var store = new AppSettingsStore(path);
+            Assert.Equal(0, store.Load().RunCount);
+
+            store.Save(store.Load() with { RunCount = 49 });
+
+            Assert.Equal(49, store.Load().RunCount);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+}
+
 public class AppSettingsStoreTests
 {
     [Fact]

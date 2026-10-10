@@ -8,6 +8,7 @@ using LogiSteam.Common.DeviceDetection;
 using LogiSteam.Common.Diagnostics;
 using LogiSteam.Common.Discovery;
 using LogiSteam.Common.GHub;
+using LogiSteam.Common.Updates;
 using LogiSteam.Common.UsbipInterop;
 using LogiSteam.UI;
 
@@ -126,6 +127,8 @@ internal sealed class WheelRole : IRole
             RunningOnPeer: _lastAck?.Ack.GHubRunning,
             PeerName: _lastAck?.Ack.HostName,
             RequiredHere: _requireGHubHere()));
+
+    public (string Name, string? Version)? Peer => _lastAck is { } ack ? (ack.Ack.HostName, ack.Ack.AppVersion) : null;
 
     public void OnWarningAction(string warningId)
     {
@@ -277,6 +280,7 @@ internal sealed class WheelRole : IRole
             Shared = device.IsShared,
             DeviceName = _selectedDevice?.DisplayName,
             GHubRunning = _gHub.IsRunning,
+            AppVersion = AppVersion.Current,
         };
     }
 

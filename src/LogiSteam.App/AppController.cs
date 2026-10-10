@@ -5,6 +5,7 @@ using LogiSteam.Common.Dashboard;
 using LogiSteam.Common.DeviceDetection;
 using LogiSteam.Common.GHub;
 using LogiSteam.Common.Tray;
+using LogiSteam.Common.Updates;
 using LogiSteam.Common.UsbipInterop;
 using LogiSteam.Roles;
 using LogiSteam.UI;
@@ -27,7 +28,17 @@ internal sealed class AppController
     private readonly WinForms.ToolStripMenuItem _statusMenuItem;
     private readonly DispatcherTimer _refreshTimer;
 
+    private readonly UpdateChecker _updateChecker = new();
+    private readonly DispatcherTimer _updateTimer;
+
     private IRole? _role;
+    private AvailableRelease? _latestRelease;
+    private UpdatePhase _updatePhase;
+    private double _updateProgress;
+    private string? _updateError;
+    private DateTime _lastUpdateCheckUtc = DateTime.MinValue;
+    private bool _updateCheckRunning;
+    private bool _donationPromptPending;
     private AppSettings _settings = new();
     private HashSet<string> _announcedWarnings = [];
     private bool _hideHintShown;
@@ -70,13 +81,23 @@ internal sealed class AppController
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _refreshTimer.Tick += (_, _) => RefreshDashboard();
 
+        _updateTimer = new DispatcherTimer { Interval = UpdateCheckInterval };
+        _updateTimer.Tick += (_, _) => _ = CheckForUpdateAsync();
+
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
     }
+
+    private static readonly TimeSpan UpdateCheckInterval = TimeSpan.FromHours(6);
+
+    // How soon a check may be repeated because the other PC reports a newer version.
+    private static readonly TimeSpan PeerPromptedCheckInterval = TimeSpan.FromMinutes(10);
 
     public void Start(bool startMinimized)
     {
         // A PC that ran the old, separate Wheel Side app has a saved wheel but no role setting.
         _settings = _settingsStore.Load();
+        SaveSettings(_settings with { RunCount = _settings.RunCount + 1 });
+        _donationPromptPending = DonationPrompt.IsDue(_settings.RunCount);
         var role = _settings.Role
             ?? (new SelectedDeviceStore().Load() is not null ? AppRole.Wheel : null);
 
@@ -91,6 +112,8 @@ internal sealed class AppController
         }
 
         _refreshTimer.Start();
+        _updateTimer.Start();
+        _ = CheckForUpdateAsync();
 
         // First run always shows the window: there's a question to answer.
         if (!startMinimized || role is null)
@@ -113,6 +136,14 @@ internal sealed class AppController
         }
 
         _window.Activate();
+
+        // Held until the window is actually opened: a launch at sign-in starts hidden in the
+        // tray, and a dialog appearing out of nowhere at boot would be the wrong moment to ask.
+        if (_donationPromptPending && !_viewModel.IsChoosingRole)
+        {
+            _donationPromptPending = false;
+            _window.Dispatcher.BeginInvoke(() => new DonateWindow { Owner = _window }.ShowDialog());
+        }
     }
 
     /// <summary>First run only: if a racing wheel is plugged into this PC, say so on the Wheel PC choice.</summary>
@@ -186,7 +217,19 @@ internal sealed class AppController
             return;
         }
 
-        var state = _role.BuildDashboard();
+        var peer = _role.Peer;
+
+        // The other PC being ahead of this one means a release this PC hasn't seen yet: look now
+        // rather than waiting for the next scheduled check. That is what makes installing a new
+        // version on one PC carry over to the other.
+        if (AppVersion.IsNewer(peer?.Version, _latestRelease?.Version ?? AppVersion.Current)
+            && DateTime.UtcNow - _lastUpdateCheckUtc > PeerPromptedCheckInterval)
+        {
+            _ = CheckForUpdateAsync();
+        }
+
+        var state = UpdateNotices.Apply(_role.BuildDashboard(), new UpdateStatus(
+            AppVersion.Current, _latestRelease?.Version, peer?.Name, peer?.Version, _updatePhase, _updateProgress, _updateError));
         _viewModel.Apply(state, [.. _role.AdvancedActions, GHubRequirementAction()]);
 
         _statusMenuItem.Text = state.Headline;
@@ -241,6 +284,12 @@ internal sealed class AppController
 
     private void OnWarningAction(string warningId)
     {
+        if (warningId == UpdateNotices.UpdateId)
+        {
+            _ = InstallUpdateAsync();
+            return;
+        }
+
         if (warningId == GHubWarnings.LocalId)
         {
             if (!GHubMonitor.OpenOrDownload())
@@ -253,6 +302,99 @@ internal sealed class AppController
         }
 
         _role?.OnWarningAction(warningId);
+    }
+
+    private async Task CheckForUpdateAsync()
+    {
+        if (_updateCheckRunning || _exiting)
+        {
+            return;
+        }
+
+        _updateCheckRunning = true;
+        _lastUpdateCheckUtc = DateTime.UtcNow;
+        try
+        {
+            if (await _updateChecker.GetLatestAsync() is { } latest)
+            {
+                _latestRelease = latest;
+                RefreshDashboard();
+            }
+        }
+        finally
+        {
+            _updateCheckRunning = false;
+        }
+    }
+
+    /// <summary>
+    /// Downloads the latest release from GitHub and runs its installer, which replaces this copy
+    /// and starts the new one. Only ever started by the user clicking Update: installing needs a
+    /// Windows permission prompt and drops the wheel for a few seconds, neither of which should
+    /// happen on its own in the middle of a race.
+    /// </summary>
+    private async Task InstallUpdateAsync()
+    {
+        if (_updatePhase != UpdatePhase.Idle || _latestRelease is not { } release || _exiting)
+        {
+            return;
+        }
+
+        _updateError = null;
+        _updateProgress = 0;
+        _updatePhase = UpdatePhase.Downloading;
+        RefreshDashboard();
+
+        string installerPath;
+        try
+        {
+            var progress = new Progress<double>(value => _updateProgress = value);
+            installerPath = await Task.Run(() => _updateChecker.DownloadInstallerAsync(release, progress));
+        }
+        catch (UpdateDownloadException ex)
+        {
+            _updatePhase = UpdatePhase.Idle;
+            _updateError = ex.Message;
+            RefreshDashboard();
+            return;
+        }
+
+        _updatePhase = UpdatePhase.Installing;
+        RefreshDashboard();
+
+        // Let go of the wheel and the network ports cleanly before the installer replaces the app.
+        var kind = _role?.Kind;
+        if (_role is { } role)
+        {
+            _role = null;
+            role.Changed -= RefreshDashboard;
+            await role.StopAsync();
+        }
+
+        try
+        {
+            // /SILENT: no wizard pages, just a progress window. The installer asks Windows for
+            // Administrator rights itself, closes this app, and starts the new version when done.
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(installerPath, "/SILENT /SUPPRESSMSGBOXES /NORESTART")
+            {
+                UseShellExecute = true,
+            })?.Dispose();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // Most often the Windows prompt was declined. Carry on with the current version.
+            _updatePhase = UpdatePhase.Idle;
+            _updateError = "The update wasn't installed because Windows didn't get permission. This PC is still on the old version.";
+            if (kind is { } previousKind)
+            {
+                StartRole(previousKind);
+            }
+
+            RefreshDashboard();
+            return;
+        }
+
+        await ExitAsync();
     }
 
     private void OnHiddenToTray()
@@ -285,6 +427,7 @@ internal sealed class AppController
         _exiting = true;
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _refreshTimer.Stop();
+        _updateTimer.Stop();
 
         if (_role is { } role)
         {
