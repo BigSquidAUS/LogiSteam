@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-The MIT License above covers LogiSteam's own source code. The installer also
-bundles unmodified third-party software under separate license terms
-(usbipd-win, GPL-3.0; usbip-win2, BSD-2-Clause; HidSharp, Apache-2.0) -- see
-THIRD-PARTY-NOTICES.md for details and full license texts.
