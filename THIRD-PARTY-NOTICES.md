@@ -1,7 +1,7 @@
 # Third-Party Notices
 
-LogiSteam's own source code is proprietary (see `LICENSE`). This installer bundles two
-independent, unmodified third-party tools that LogiSteam.WheelSide and LogiSteam.GameSide invoke
+LogiSteam's own source code is released under the MIT License (see `LICENSE`). This installer bundles two
+independent, unmodified third-party tools that LogiSteam invokes
 as external processes (never linked or relinked into LogiSteam's own binaries). Both are
 redistributed here under their original license terms, reproduced below.
 
@@ -14,7 +14,7 @@ redistributed here under their original license terms, reproduced below.
 - Source code: the exact source corresponding to this vendored build is publicly available at the
   project URL above, tag `v5.3.0`. LogiSteam makes no modifications to it.
 
-LogiSteam.WheelSide only invokes the installed `usbipd.exe` as a separate command-line process
+LogiSteam (in its Wheel PC role) only invokes the installed `usbipd.exe` as a separate command-line process
 (see `src/LogiSteam.Common/UsbipInterop/UsbipdCliWrapper.cs`) -- it is not statically or
 dynamically linked into any LogiSteam binary. Redistributing this GPL-3.0 component alongside
 LogiSteam (rather than requiring a separate download) still constitutes distribution under the
@@ -28,7 +28,7 @@ GPL-3.0 section 6.
 - Vendored version: 0.9.7.8 (`installer/vendor/USBip-0.9.7.8-x64.exe`), unmodified upstream binary
 - Full license text: [`licenses/BSD-2-Clause-usbip-win2.txt`](licenses/BSD-2-Clause-usbip-win2.txt)
 
-LogiSteam.GameSide only invokes the installed `usbip.exe` as a separate command-line process (see
+LogiSteam (in its Game PC role) only invokes the installed `usbip.exe` as a separate command-line process (see
 `src/LogiSteam.Common/UsbipInterop/UsbipCliWrapper.cs`) -- it is not statically or dynamically
 linked into any LogiSteam binary.
 

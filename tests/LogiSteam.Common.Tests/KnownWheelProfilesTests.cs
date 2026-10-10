@@ -5,51 +5,39 @@ namespace LogiSteam.Common.Tests;
 
 public class KnownWheelProfilesTests
 {
-    [Fact]
-    public void G29Profile_ContainsExactlyTheThreeConfirmedPersonas()
-    {
-        // Regression guard: if someone "cleans up" this list later thinking a persona is a
-        // duplicate/mistake, this test fails loudly and forces them to re-read why all three are
-        // independently confirmed on one real unit (PS3 mode, PS4 mode, native/generic mode).
-        var expected = new[]
-        {
-            new UsbHardwareId(UsbHardwareId.LogitechVendorId, 0xC24F),
-            new UsbHardwareId(UsbHardwareId.LogitechVendorId, 0xC260),
-            new UsbHardwareId(UsbHardwareId.LogitechVendorId, 0xC52B),
-        };
+    private static UsbHardwareId Logitech(ushort productId) => new(UsbHardwareId.LogitechVendorId, productId);
 
-        Assert.Equal(expected, KnownWheelProfiles.G29.HardwareIds);
+    [Fact]
+    public void G29Profile_ContainsExactlyItsTwoConfirmedPersonas()
+    {
+        // PS3 mode and PS4 mode, both confirmed on a real unit.
+        Assert.Equal([Logitech(0xC24F), Logitech(0xC260)], KnownWheelProfiles.G29.HardwareIds);
     }
 
     [Fact]
-    public void G29Profile_HasNonEmptyDisplayName()
+    public void Catalog_DoesNotTreatTheUnifyingReceiverAsAWheel()
     {
-        Assert.False(string.IsNullOrWhiteSpace(KnownWheelProfiles.G29.DisplayName));
+        // Regression guard: 046d:c52b is Logitech's Unifying wireless receiver (a mouse/keyboard
+        // dongle). It was once listed as a G29 "native mode" persona, which let LogiSteam pick
+        // and share somebody's mouse dongle as "the wheel". Do not add it back.
+        Assert.Null(KnownWheelProfiles.Find(Logitech(0xC52B)));
+        Assert.Null(KnownWheelProfiles.Find(Logitech(0xC532)));
     }
 
-    [Fact]
-    public void All_ContainsG29()
+    [Theory]
+    [InlineData(0xC24F, "Logitech G29")]
+    [InlineData(0xC260, "Logitech G29")]
+    [InlineData(0xC262, "Logitech G920")]
+    [InlineData(0xC26E, "Logitech G923")]
+    [InlineData(0xC29B, "Logitech G27")]
+    [InlineData(0xC299, "Logitech G25")]
+    [InlineData(0xC29A, "Logitech Driving Force GT")]
+    public void TryGetDisplayName_ReturnsTheModelName_ForAKnownPersona(int productId, string expectedName)
     {
-        Assert.Contains(KnownWheelProfiles.G29, KnownWheelProfiles.All);
-    }
-
-    [Fact]
-    public void All_ContainsNoDuplicateHardwareIdsAcrossProfiles()
-    {
-        // Future-proofing for when a second profile is added: a hardware id claimed by two
-        // profiles would make WheelAutoDetector's first-match result ambiguous/non-deterministic.
-        var allIds = KnownWheelProfiles.All.SelectMany(p => p.HardwareIds).ToList();
-
-        Assert.Equal(allIds.Count, allIds.Distinct().Count());
-    }
-
-    [Fact]
-    public void TryGetDisplayName_ReturnsTrueAndName_ForAKnownPersona()
-    {
-        var found = KnownWheelProfiles.TryGetDisplayName(new UsbHardwareId(UsbHardwareId.LogitechVendorId, 0xC52B), out var displayName);
+        var found = KnownWheelProfiles.TryGetDisplayName(Logitech((ushort)productId), out var displayName);
 
         Assert.True(found);
-        Assert.Equal("Logitech G29", displayName);
+        Assert.Equal(expectedName, displayName);
     }
 
     [Fact]
@@ -59,5 +47,25 @@ public class KnownWheelProfilesTests
 
         Assert.False(found);
         Assert.Null(displayName);
+    }
+
+    [Fact]
+    public void All_ProfilesHaveANameAndAtLeastOneHardwareId()
+    {
+        Assert.All(KnownWheelProfiles.All, profile =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(profile.DisplayName));
+            Assert.NotEmpty(profile.HardwareIds);
+        });
+    }
+
+    [Fact]
+    public void All_ContainsNoDuplicateHardwareIdsAcrossProfiles()
+    {
+        // A hardware id claimed by two profiles would make WheelAutoDetector's first-match
+        // result depend on catalog order.
+        var allIds = KnownWheelProfiles.All.SelectMany(p => p.HardwareIds).ToList();
+
+        Assert.Equal(allIds.Count, allIds.Distinct().Count());
     }
 }

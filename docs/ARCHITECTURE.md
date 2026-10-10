@@ -23,8 +23,32 @@ is tunneled rather than translated into a lossy gamepad signal.
 |---|---|---|---|
 | [`dorssel/usbipd-win`](https://github.com/dorssel/usbipd-win) | Wheel PC | USB/IP server: shares the physically attached G29 | GPL-3.0 |
 | [`vadimgrn/usbip-win2`](https://github.com/vadimgrn/usbip-win2) | Game PC | USB/IP client: attaches the shared G29 via its VHCI virtual bus driver | BSD-2-Clause |
-| `LogiSteam.WheelSide` | Wheel PC | Registers `usbipd-win`'s AutoBind policy once; watches for the user-selected device; beacons its bus id on the LAN | (this repo) |
-| `LogiSteam.GameSide` | Game PC | Discovers the Wheel PC's beacon; auto-attaches/detaches via `usbip-win2`'s CLI; acks back so the Wheel PC knows it's seen | (this repo) |
+| `LogiSteam.App` (`WheelRole`) | Wheel PC | Identifies the wheel; registers `usbipd-win`'s AutoBind policy once; beacons its bus id on the LAN | (this repo) |
+| `LogiSteam.App` (`GameRole`) | Game PC | Discovers the Wheel PC's beacon; auto-attaches/detaches via `usbip-win2`'s CLI; acks back so the Wheel PC knows it's seen | (this repo) |
+
+`LogiSteam.App` is a single executable (`LogiSteam.exe`) installed on both PCs. `AppController`
+owns the WPF main window, the tray icon and exactly one running role (`IRole`): `WheelRole` or
+`GameRole`, chosen with the switch at the top of the window and persisted in
+`%LOCALAPPDATA%\LogiSteam\settings.json`. Switching stops one role (releasing its ports, and
+detaching the wheel if it was the Game PC) and starts the other. Where this document says
+"WheelSide"/"GameSide" below, read "the app in its Wheel PC role"/"in its Game PC role" -- they
+were separate executables in 1.x. A second launch (desktop shortcut) doesn't start a second
+copy; `SingleInstance` asks the running one to show its window.
+
+What the window says is not decided in the UI. `LogiSteam.Common/Dashboard` holds two pure
+functions, `WheelSideDashboard.Build` and `GameSideDashboard.Build`, that turn a role's raw
+state into a `DashboardState` (headline, detail, colour level, checklist steps, warnings). The
+window and the tray icon both render that, so they can never disagree, and the wording is
+covered by unit tests.
+
+Logitech G HUB has to be running on the Game PC, and optionally on the Wheel PC too (the
+`RequireGHubOnWheelPc` setting, off by default, toggled under Advanced -- the fallback for a
+setup where the wheel needs it at both ends). `GHubMonitor` checks for its processes locally
+(`lghub` or `lghub_agent`; not `lghub_updater`, a service that outlives G HUB), and each side
+reports its answer to the other in the beacon/ack (`gHubRunning`), so both windows can warn
+about the other PC. `GHubStatus.RequiredHere`/`RequiredOnPeer` carry which ends are required, so
+the same warning logic serves both roles and both settings. A peer running 1.x doesn't send the field, which is treated as unknown rather
+than as a warning.
 
 `LogiSteam.Common` holds everything shared between the two tray apps:
 
@@ -46,10 +70,10 @@ is tunneled rather than translated into a lossy gamepad signal.
   function/interface); `UsbInventoryDiff` compares two snapshots and reports arrivals/departures/
   moves. `WheelDeviceWatcher` polls Windows PnP presence (via WMI) for the user-picked device, but
   is **not** used to gate sharing/beaconing -- see the "Why usbipd state, not WMI" note below for
-  why that used to be a real bug. It only drives the picker's live list and an optional "refresh
+  why that used to be a real bug. It only drives an optional "refresh
   sooner" hint.
 - `Config/` -- `SelectedDeviceStore` persists the user's chosen device (`%LOCALAPPDATA%\LogiSteam\wheelside-device.json`)
-  so the picker (`LogiSteam.WheelSide/DevicePickerForm.cs`) only needs to run once. A hardcoded
+  so identification survives restarts and the wheel being unplugged. A hardcoded
   VID/PID assumption for the G29 was wrong twice in practice (once from a stale third-party
   lookup, once from real per-unit/firmware variance) -- letting the user confirm the device
   directly is more reliable than guessing a single constant ever again.
@@ -62,8 +86,7 @@ is tunneled rather than translated into a lossy gamepad signal.
   `UsbDeviceInventoryLogger` (Wheel PC only) polls the full USB device list, diffs it against the
   previous snapshot via `UsbInventoryDiff`, and appends only the *changes* (arrival/departure/
   moved) to `%LOCALAPPDATA%\LogiSteam\logs\usb-devices.log` (5MB rotation), tagging Logitech-vendor
-  devices and whichever one is currently selected. Reachable from the Wheel PC tray menu ("Open
-  USB Device Log"). This turns the one-off diagnostic scripts used to track down the bind/rebind/
+  devices and whichever one is currently selected. Reachable from Advanced > USB device log on the Wheel PC. This turns the one-off diagnostic scripts used to track down the bind/rebind/
   bus-move flakiness below into a permanent, built-in feature.
   `RemoteDiagnosticsServer` (both apps) is a plain TCP listener (WheelSide: port 35896, GameSide:
   port 35897) that responds to any connection with a live JSON snapshot of that app's current
@@ -77,7 +100,7 @@ is tunneled rather than translated into a lossy gamepad signal.
   see below), so most troubleshooting no longer needs the PowerShell script at all.
   `HidInputTester` wraps HidSharp to read raw HID input reports live from a set of hardware ids,
   productizing the ad-hoc scratch scripts used to confirm the G29's input was flowing end-to-end
-  during this project's troubleshooting. Both apps expose an "Open Diagnostics..." tray menu item
+  during this project's troubleshooting. Both roles expose an Advanced > Diagnostics window
   (`WheelSideDiagnosticsForm`/`GameSideDiagnosticsForm`, non-modal, single-instance) with a
   Connectivity panel (the same snapshot JSON above, auto-refreshing) and an Input Test panel
   (`HidInputTester` against the current device selection, showing live raw report bytes) --
@@ -102,7 +125,7 @@ triggering a new attach that binds it again -- a bind/unbind feedback loop LogiS
 against itself, with a wheel that was never actually disconnected. `usbipd state` is
 `usbipd-win`'s own authoritative view and already correctly tracks the device through binding/
 stub-driver changes (that's the whole point of the tool), so `WheelSide` now uses it alone as the
-presence signal, and only uses the WMI watcher for the device picker and as a non-blocking
+presence signal, and only uses the WMI watcher as a non-blocking
 "refresh sooner" hint.
 
 Since a wheel is now a multi-persona profile (see above), `usbipd state` can legitimately list
@@ -115,12 +138,12 @@ than a stale one.
 ## Data flow
 
 ```
-[Wheel PC] first run: DevicePickerForm lists USB devices (UsbDeviceEnumerator) -> user picks one
-                      -> persisted via SelectedDeviceStore -> everything below uses that choice
+[Wheel PC] WheelAutoDetector identifies the wheel among the plugged-in USB devices (no dialog)
+           -> persisted via SelectedDeviceStore -> everything below uses that selection
 
 [wheel/device] --USB--> [Wheel PC]
    WheelSide: ensures usbipd-win AutoBind policy for the selected VID:PID (one-time, one UAC prompt)
-   WheelSide: watches for the selected device, beacons {hostname, busid, vid, pid, shared} over UDP :35893
+   WheelSide: watches for the selected device, beacons {hostname, busid, vid, pid, shared, deviceName, gHubRunning} over UDP :35893
    WheelSide: listens for acks on UDP :35894 (AckListener) -> tray shows "connected to GAME-PC" once one arrives
 
 [Game PC]
@@ -135,25 +158,36 @@ in. Steam Remote Play only has to stream video/audio; LogiSteam and the USB/IP p
 100% of the input (and force-feedback, if Phase 0 confirms it works).
 ```
 
-## Why a device picker instead of a hardcoded VID/PID
+## How the wheel is identified (and why not one hardcoded VID/PID)
 
-Two real incidents motivated the original move away from a single hardcoded identifier: the G29's
-Product ID was first sourced from a third-party VID/PID lookup site (wrong -- it didn't match any
-real device), then corrected to a value read directly from one real unit's Device Manager entry
-(`0xC52B`) -- which then turned out to still not universally match every setup. Further live
-debugging revealed why: the G29 isn't one fixed VID:PID at all. It has a physical PS3/PS4 mode
-switch plus a native/generic mode, and each mode makes the *same physical wheel* enumerate as a
-completely different USB persona (`046D:C24F`, `046D:C260`, `046D:C52B` -- all three directly
-confirmed on one real unit, same port/InstanceId suffix, only the VID:PID prefix differs).
+The G29 isn't one fixed VID:PID. It has a physical PS3/PS4 mode switch, and the *same physical
+wheel* can enumerate under different product ids (`046D:C24F` and `046D:C260`, both confirmed on
+one real unit; with G HUB running, that unit reports `C24F` in either switch position). A single
+hardcoded id therefore strands the connection the moment the wheel is in the other mode.
 
-So "the wheel" is now a **named profile backed by a set of hardware ids**
-(`SelectedDevice { DisplayName, HardwareIds }`, see `KnownWheelProfiles.G29`), not a single id.
-On first run, `WheelAutoDetector` tries to match this catalog against currently-plugged-in devices
-before ever showing a picker -- zero dialogs for a recognized wheel. `DevicePickerForm` (via
-"Select USB Device..." in the tray menu) remains the always-available manual override: a manual
-pick is just a 1-entry hardware-id set, so unrecognized wheels and non-wheel devices still work
-exactly as before. This also means LogiSteam isn't G29-specific at all -- any USB device can be
-shared this way, and a new confirmed wheel model is just a new catalog entry (see `docs/SETUP.md`).
+So "the wheel" is a **named profile backed by a set of hardware ids**
+(`SelectedDevice { DisplayName, HardwareIds, Source }`), and `WheelAutoDetector` identifies it
+with no user involvement, in two steps:
+
+1. **Catalog** (`KnownWheelProfiles`): Logitech wheel models and every id each can report. The
+   G29's ids were observed on real hardware; the rest come from the Linux kernel's Logitech
+   wheel drivers (`drivers/hid/hid-ids.h`).
+2. **Product name**: a Logitech device the catalog doesn't list is accepted if its USB product
+   string (read via HidSharp, `HidProductNameProbe`) reads like a racing wheel. Names containing
+   "mouse", "keyboard", "receiver" and the like are rejected even if they contain "wheel".
+
+`WheelAutoDetector.ReconcileSelection` re-runs this on every refresh tick, so a mode switch or a
+swapped wheel heals itself. It never overrides a manual choice (`Source = Manual`, made under
+Advanced > Choose the wheel manually -- the fallback for an unrecognized wheel, and the only
+place a device list exists), and it drops a saved selection that isn't a recognizable wheel at
+all, which is what a 1.x manual pick of the wrong device looks like.
+
+A cautionary note on `046D:C52B`: 1.x listed it as a third G29 "native mode" id. It is
+Logitech's Unifying wireless receiver (`USB_DEVICE_ID_LOGITECH_UNIFYING_RECEIVER`), which shows
+up in Device Manager as "Logitech USB Input Device". With it in the catalog, a Wheel PC with a
+Logitech mouse/keyboard dongle could identify, and share, the dongle as "the G29". It was
+removed, a saved selection containing it is cleaned up automatically, and a test guards against
+it coming back.
 
 ## Known open risk: force feedback over the network
 

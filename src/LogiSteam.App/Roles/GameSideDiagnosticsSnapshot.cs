@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using LogiSteam.Common.Discovery;
 
-namespace LogiSteam.GameSide;
+namespace LogiSteam.Roles;
 
 /// <summary>Everything a remote troubleshooter would want to know about GameSide's live state, in one query.</summary>
 public sealed class GameSideDiagnosticsSnapshot

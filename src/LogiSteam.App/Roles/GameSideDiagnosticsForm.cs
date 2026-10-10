@@ -1,9 +1,11 @@
+using System.Drawing;
+using System.Windows.Forms;
 using System.Management;
 using LogiSteam.Common.DeviceDetection;
 using LogiSteam.Common.Diagnostics;
 using LogiSteam.Common.UsbipInterop;
 
-namespace LogiSteam.GameSide;
+namespace LogiSteam.Roles;
 
 /// <summary>
 /// Game PC counterpart to WheelSideDiagnosticsForm. Same two-section shape (Connectivity, Input

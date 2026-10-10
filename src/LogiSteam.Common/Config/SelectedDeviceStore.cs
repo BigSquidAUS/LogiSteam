@@ -30,6 +30,19 @@ public sealed class SelectedDeviceStore(string? path = null)
         }
     }
 
+    /// <summary>Forgets the saved wheel, so detection starts from scratch.</summary>
+    public void Clear()
+    {
+        try
+        {
+            File.Delete(_path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Nothing useful to do; the next successful Save overwrites it anyway.
+        }
+    }
+
     public void Save(SelectedDevice device)
     {
         var dir = Path.GetDirectoryName(_path);

@@ -24,7 +24,7 @@ public static class CrashLogger
         };
     }
 
-    private static void Report(string appName, Exception ex)
+    public static void Report(string appName, Exception ex)
     {
         try
         {

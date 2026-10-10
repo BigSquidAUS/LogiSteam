@@ -21,6 +21,10 @@ public sealed class AckMessage
     [JsonPropertyName("attached")]
     public bool Attached { get; init; }
 
+    /// <summary>Whether Logitech G HUB is running on the Game PC. Null from an older LogiSteam.</summary>
+    [JsonPropertyName("gHubRunning")]
+    public bool? GHubRunning { get; init; }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

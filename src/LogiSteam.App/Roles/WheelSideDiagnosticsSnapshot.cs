@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using LogiSteam.Common.DeviceDetection;
 
-namespace LogiSteam.WheelSide;
+namespace LogiSteam.Roles;
 
 /// <summary>Everything a remote troubleshooter would want to know about WheelSide's live state, in one query.</summary>
 public sealed class WheelSideDiagnosticsSnapshot

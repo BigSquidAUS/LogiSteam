@@ -61,7 +61,12 @@ public sealed class UsbipdCliWrapper(string executablePath = "usbipd")
     /// Batches every still-missing policy into a single elevated invocation, so a multi-persona
     /// profile only ever produces one UAC prompt (the first time it's needed), not one per persona.
     /// </summary>
-    public async Task<bool> EnsureAutoBindPoliciesAsync(IReadOnlyList<UsbHardwareId> hardwareIds, CancellationToken ct = default)
+    /// <param name="allowElevationPrompt">
+    /// False to only check (and try without elevation), never raising a UAC prompt -- for
+    /// background re-checks, so a declined prompt isn't re-raised every refresh tick.
+    /// </param>
+    public async Task<bool> EnsureAutoBindPoliciesAsync(
+        IReadOnlyList<UsbHardwareId> hardwareIds, bool allowElevationPrompt = true, CancellationToken ct = default)
     {
         var listResult = await ProcessRunner.RunAsync(executablePath, ["policy", "list"], ct).ConfigureAwait(false);
         var existingPolicyText = listResult.Succeeded ? listResult.StdOut : string.Empty;
@@ -85,6 +90,11 @@ public sealed class UsbipdCliWrapper(string executablePath = "usbipd")
         if (stillMissing.Count == 0)
         {
             return true;
+        }
+
+        if (!allowElevationPrompt)
+        {
+            return false;
         }
 
         // `policy add` requires Administrator rights; this is the one operation LogiSteam ever

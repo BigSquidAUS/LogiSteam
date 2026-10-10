@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-  Fetches a live diagnostics snapshot from a running LogiSteam.WheelSide or LogiSteam.GameSide
+  Fetches a live diagnostics snapshot from a running LogiSteam (in its Wheel PC or Game PC role)
   instance over the LAN (see RemoteDiagnosticsServer). Read-only -- this cannot change any state
-  on the target machine, it only fetches whatever that app's TrayApp.BuildDiagnosticsSnapshotJson
+  on the target machine, it only fetches whatever that role's BuildDiagnosticsSnapshotJson
   currently reports.
 
 .EXAMPLE

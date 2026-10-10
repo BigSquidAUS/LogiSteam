@@ -10,12 +10,13 @@ public class SelectedDeviceTests
     public void From_UpgradesToFullKnownProfile_WhenPickedDeviceMatchesTheCatalog()
     {
         var g29Persona = new UsbDeviceInfo(
-            new UsbHardwareId(UsbHardwareId.LogitechVendorId, 0xC52B), "Logitech USB Input Device", "USB\\VID_046D&PID_C52B\\1");
+            new UsbHardwareId(UsbHardwareId.LogitechVendorId, 0xC24F), "USB Composite Device", "USB\\VID_046D&PID_C24F\\1");
 
         var selected = SelectedDevice.From(g29Persona);
 
         Assert.Equal(KnownWheelProfiles.G29.DisplayName, selected.DisplayName);
         Assert.Equal(KnownWheelProfiles.G29.HardwareIds, selected.HardwareIds);
+        Assert.Equal(WheelSelectionSource.Catalog, selected.Source);
     }
 
     [Fact]
@@ -27,5 +28,6 @@ public class SelectedDeviceTests
 
         Assert.Equal("Some Other Device", selected.DisplayName);
         Assert.Equal([unknownDevice.HardwareId], selected.HardwareIds);
+        Assert.Equal(WheelSelectionSource.Manual, selected.Source);
     }
 }

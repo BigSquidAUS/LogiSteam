@@ -1,7 +1,9 @@
+using System.Drawing;
+using System.Windows.Forms;
 using LogiSteam.Common.Diagnostics;
 using LogiSteam.Common.UsbipInterop;
 
-namespace LogiSteam.WheelSide;
+namespace LogiSteam.Roles;
 
 /// <summary>
 /// Built-in replacement for the ad-hoc scratch scripts used throughout this project's

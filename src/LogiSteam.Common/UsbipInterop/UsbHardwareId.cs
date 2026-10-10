@@ -9,17 +9,11 @@ public readonly record struct UsbHardwareId(ushort Vendor, ushort Product)
     public const ushort LogitechVendorId = 0x046D;
 
     /// <summary>
-    /// One confirmed Product ID for the G29 wheel base -- its "native"/generic mode, where it
-    /// shows up as "Logitech USB Input Device" (VID_046D&amp;PID_C52B) in Device Manager. This is
-    /// NOT the only valid G29 persona: the wheel has a physical PS3/PS4 mode switch, and each
-    /// position makes the exact same physical unit enumerate under a completely different
-    /// PID (0xC24F for PS3 mode, 0xC260 for PS4 mode -- both independently confirmed on a real
-    /// unit, same physical USB port). See <see cref="DeviceDetection.KnownWheelProfiles.G29"/>
-    /// for the full, authoritative multi-persona list used for auto-detection; this single
-    /// constant is kept only as a convenient one-id fixture (e.g. for tests). The one real
-    /// mistake in this area's history was trusting a PID from a third-party lookup site instead
-    /// of a real device -- always confirm a new persona against Device Manager/`usbipd state`
-    /// before adding it anywhere, never from an online database.
+    /// Kept only as a one-id fixture for tests. Despite the name, 0xC52B is not a G29: it is
+    /// Logitech's Unifying wireless receiver ("Logitech USB Input Device" in Device Manager),
+    /// which an early version mistook for the wheel. The G29's real personas (0xC24F in PS3
+    /// mode, 0xC260 in PS4 mode) live in <see cref="DeviceDetection.KnownWheelProfiles.G29"/>,
+    /// and nothing uses this constant to identify a wheel.
     /// </summary>
     public const ushort G29ProductId = 0xC52B;
 

@@ -1,21 +1,22 @@
 using System.ComponentModel;
 using System.Net;
 using LogiSteam.Common.Discovery;
+using LogiSteam.Common.GHub;
 using LogiSteam.Common.Tray;
 using LogiSteam.Common.UsbipInterop;
 
-namespace LogiSteam.GameSide;
+namespace LogiSteam.Roles;
 
 /// <summary>
 /// Drives the Game PC's side of the zero-config handshake: as soon as a Wheel PC beacon shows
-/// the G29 shared, attach it automatically; detach cleanly if the beacon disappears or on app
+/// the wheel shared, attach it automatically; detach cleanly if the beacon disappears or on app
 /// exit. This is the piece usbip-win2 itself doesn't provide (it has no auto-attach/policy
 /// engine, unlike usbipd-win's AutoBind policies on the Wheel PC side).
 ///
 /// Every beacon processed also gets a return ack sent to the Wheel PC (see AckSender), so the
 /// Wheel PC can show whether a Game PC currently sees it -- not just that it's broadcasting.
 /// </summary>
-public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip)
+public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip, GHubMonitor gHub)
 {
     // The G29 runs a ~10 second autocentering calibration on connect, during which an attach
     // attempt can fail or the device can otherwise be unresponsive. Without a cooldown, a failed
@@ -145,24 +146,24 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
             return; // still cooling down from a recent failure; let the device settle before retrying
         }
 
-        StatusChanged?.Invoke(new TrayStatus($"Attaching G29 from {pc.Beacon.HostName}...", TrayStatusLevel.Warning));
+        StatusChanged?.Invoke(new TrayStatus($"Attaching {WheelName(pc)} from {pc.Beacon.HostName}...", TrayStatusLevel.Warning));
         try
         {
             var attached = await usbip.AttachAsync(host, pc.Beacon.BusId).ConfigureAwait(false);
             _attached = attached;
             _attachedHost = host;
             _lastFailedAttachUtc = null;
-            StatusChanged?.Invoke(new TrayStatus($"Attached - G29 from {pc.Beacon.HostName} (local port {attached.Port})", TrayStatusLevel.Connected));
+            StatusChanged?.Invoke(new TrayStatus($"Attached - {WheelName(pc)} from {pc.Beacon.HostName} (local port {attached.Port})", TrayStatusLevel.Connected));
         }
         catch (UsbipCommandException ex)
         {
             _lastFailedAttachUtc = DateTime.UtcNow;
-            StatusChanged?.Invoke(new TrayStatus($"Attach failed: {ex.Message} - retrying shortly", TrayStatusLevel.Error));
+            StatusChanged?.Invoke(new TrayStatus($"The wheel couldn't be attached to this PC ({ex.Message.Trim()}). Trying again shortly.", TrayStatusLevel.Error));
         }
         catch (Win32Exception)
         {
             _lastFailedAttachUtc = DateTime.UtcNow;
-            StatusChanged?.Invoke(new TrayStatus("usbip-win2 not found - install it, then restart LogiSteam", TrayStatusLevel.Error));
+            StatusChanged?.Invoke(new TrayStatus("usbip-win2, the tool LogiSteam uses to connect the wheel, isn't installed on this PC. Run the LogiSteam installer again to add it.", TrayStatusLevel.Error));
         }
     }
 
@@ -254,7 +255,10 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
         {
             HostName = Environment.MachineName,
             Attached = _attachedHost == wheelPcAddress.ToString(),
+            GHubRunning = gHub.IsRunning,
         });
+
+    private static string WheelName(DiscoveredWheelPc pc) => pc.Beacon.DeviceName ?? "wheel";
 
     /// <summary>Called on app shutdown so a stale VHCI port doesn't linger after LogiSteam exits.</summary>
     public async Task DetachForShutdownAsync()

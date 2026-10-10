@@ -29,6 +29,14 @@ public sealed class BeaconMessage
     [JsonPropertyName("shared")]
     public bool Shared { get; init; }
 
+    /// <summary>The wheel's display name ("Logitech G29"). Null from a Wheel PC running an older LogiSteam.</summary>
+    [JsonPropertyName("deviceName")]
+    public string? DeviceName { get; init; }
+
+    /// <summary>Whether Logitech G HUB is running on the Wheel PC. Null from an older LogiSteam.</summary>
+    [JsonPropertyName("gHubRunning")]
+    public bool? GHubRunning { get; init; }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

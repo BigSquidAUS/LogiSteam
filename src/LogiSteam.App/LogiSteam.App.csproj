@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\LogiSteam.Common\LogiSteam.Common.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>LogiSteam</AssemblyName>
+    <RootNamespace>LogiSteam</RootNamespace>
+    <ApplicationIcon>Assets\LogiSteam.ico</ApplicationIcon>
+    <Version>2.0.0</Version>
+  </PropertyGroup>
+
+  <!-- WPF is the UI; Windows Forms is only here for the tray icon and the diagnostics window.
+       Its global usings are dropped so the two frameworks' same-named types (Application,
+       MessageBox, Button...) never collide; files that need Windows Forms import it explicitly. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\LogiSteam.ico" />
+  </ItemGroup>
+
+</Project>

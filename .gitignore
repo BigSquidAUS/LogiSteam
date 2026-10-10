@@ -482,3 +482,9 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# The "*.app" rule above (macOS bundles) would otherwise swallow the LogiSteam.App project folder.
+!src/LogiSteam.App/
+
+# Vendored prerequisite installers are part of the repo (the "*.msi" rule above would hide one).
+!installer/vendor/*.msi

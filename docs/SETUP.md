@@ -26,79 +26,67 @@ whether the whole project is worth relying on.
 ## One-time setup (per machine)
 
 There is a single installer, `LogiSteam-Setup.exe` (built from `installer/LogiSteam.Setup/LogiSteam.iss`),
-used on both machines. Run it and pick a role on its component-selection page:
+and a single app, `LogiSteam.exe`, used on both machines.
 
-- **"Wheel PC (Client)"** -- this PC has the G29 physically plugged in. Silently installs
-  `usbipd-win` first (only if not already present), then installs `LogiSteam.WheelSide`.
-- **"Game PC (Host)"** -- this PC runs Steam and the game. Silently installs `usbip-win2` first
-  (only if not already present), then installs `LogiSteam.GameSide`.
+1. Run `LogiSteam-Setup.exe` on each PC. One UAC prompt is expected. It installs LogiSteam and,
+   if they aren't already present, both prerequisites (`usbipd-win` and `usbip-win2`) -- both,
+   because either role can be chosen later in the app.
+2. Confirm both PCs are on the same LAN subnet, wired connection recommended.
+3. The wizard offers "Start LogiSteam automatically when Windows starts" (it then starts
+   quietly in the tray) and "Create a desktop icon".
+4. The first time LogiSteam opens it asks **"Which PC is this?"** -- choose **Wheel PC** on the
+   machine the wheel is plugged into and **Game PC** on the machine that runs Steam and the
+   game. If a racing wheel is already plugged in, the Wheel PC choice says so. The choice can be
+   changed at any time with the switch at the top of the window.
+5. On the Wheel PC, the first time the wheel is found LogiSteam registers a one-time "AutoBind"
+   policy for it with `usbipd-win`, which needs Administrator rights: expect one UAC prompt. If
+   it is declined, the window shows "One-time permission needed" with an **Allow** button to
+   try again -- it is never re-prompted on a timer.
+6. Open **Logitech G HUB** on the Game PC. LogiSteam warns in its window and from the tray
+   icon, on both PCs, whenever G HUB isn't running there. G HUB is not required on the Wheel PC
+   by default; if the wheel misbehaves without it, turn on **Advanced > G HUB on the Wheel PC:
+   required** on both PCs and they will check and warn about the Wheel PC's G HUB as well.
 
-The two roles are mutually exclusive (selecting one deselects the other) since a single machine
-only ever plays one role; "Wheel PC" is the default selection. Steps:
+## How the wheel is identified
 
-1. Run `LogiSteam-Setup.exe` on each machine, choosing the matching role.
-2. One UAC prompt is expected either way (the installer runs elevated, since both prerequisite
-   drivers need Administrator rights to install regardless of who triggers it).
-3. Confirm both PCs are on the same LAN subnet, wired connection recommended.
-4. The wizard offers a "start automatically when Windows starts" checkbox, a "launch now"
-   checkbox, and a "Create a desktop icon" checkbox (checked by default) for each role, so
-   there's nothing left to configure by hand after it finishes.
-5. The first time `LogiSteam.WheelSide` *runs*, it first tries to auto-detect a known wheel model
-   from the currently-plugged-in devices -- see "Selecting your wheel" below. It only opens the
-   manual device picker if nothing recognized is plugged in.
-6. Once a device is selected (automatically or manually), `LogiSteam.WheelSide` also registers a
-   one-time "AutoBind" policy for that device's hardware id(s) with `usbipd-win` -- if that wasn't
-   already done as part of the install, expect one more brief UAC prompt at that point (a single
-   prompt even for a multi-persona wheel like the G29, which registers all of its known personas
-   in one batched elevation); it is not required on subsequent launches, since the policy persists.
+Nobody is asked to pick a device. On the Wheel PC, LogiSteam looks at the USB devices plugged in
+and identifies the racing wheel itself:
 
-## Selecting your wheel
+1. **By USB id**, against a built-in catalog of Logitech wheels (`KnownWheelProfiles` in the
+   source): G29, G920, G923, G27, G25, Driving Force GT / Pro / EX, MOMO. A model that changes
+   USB id with its mode switch lists every id it can report (the G29's PS3 and PS4 modes).
+2. **By USB product name**, for a Logitech wheel the catalog doesn't list: a Logitech device
+   whose product name reads like a wheel ("... Racing Wheel", "Driving Force ...") is accepted.
+   Mice, keyboards, joysticks and wireless receivers are not.
 
-`LogiSteam.WheelSide` no longer assumes a single fixed VID/PID for "the" G29 -- that assumption
-was wrong twice in practice (a stale value from a third-party lookup site, then a real
-per-unit/firmware difference), and live debugging showed why: the G29's PS3/PS4 mode switch and
-native/generic mode make the *same physical wheel* enumerate as three different USB personas.
-So a recognized wheel is now a small built-in catalog of known models, each backed by every
-confirmed persona's hardware id (see `KnownWheelProfiles` in the source for the current list).
+The window then shows the wheel by its model name ("Logitech G29") regardless of which mode it
+happens to be in.
 
-- **Automatic (default):** on first run, `LogiSteam.WheelSide` checks currently-plugged-in devices
-  against that catalog and silently selects a match -- no dialog, no user action. The tray status
-  then reads e.g. "Sharing Logitech G29 (bus 3-1)" using the model's stable name, regardless of
-  which persona happens to be live underneath at any given moment.
-- **Manual override:** if nothing in the catalog matches (an unrecognized wheel model, or any
-  other USB device you want to share), right-click the tray icon and choose **"Select USB
-  Device..."** to get a list of every USB device Windows currently sees, deduplicated so one
-  physical device shows as one entry even if it has multiple internal USB interfaces. Likely-wheel
-  candidates (Logitech vendor id, or a description mentioning "wheel"/"racing"/"driving force") are
-  sorted to the top to make manual selection easier. Pick the one that's yours; the choice is
-  remembered (`%LOCALAPPDATA%\LogiSteam\wheelside-device.json`) so you only do this once. If you
-  don't see your device in the list, unplug/replug it and click **Refresh** -- and check Device
-  Manager's "Hardware Ids" for that device (Details tab) if you want to confirm what LogiSteam
-  should be matching. This override is always available from the tray menu, even after an
-  automatic match, if you ever need to change the selection.
+**If your wheel isn't found:** open **Advanced > Choose the wheel manually**. That lists the USB
+devices on the PC (likely wheels first) so you can pick it by hand. A manual choice is never
+overridden by automatic detection; **Advanced > Go back to automatic detection** undoes it.
 
-**Adding a new confirmed wheel model to the catalog** (maintainers): only add a profile once
-you've directly observed its hardware id(s) on a real unit -- e.g. via Device Manager's "Hardware
-Ids" (Details tab) or a log line from `UsbDeviceInventoryLogger` -- never from a third-party
-lookup site (that's the exact mistake that motivated moving away from hardcoded ids in the first
-place). Add a new `KnownWheelProfile` entry to `KnownWheelProfiles.All` in
-`src/LogiSteam.Common/DeviceDetection/KnownWheelProfiles.cs`, listing every persona you've
-confirmed for that model, then add a `KnownWheelProfilesTests.cs` regression guard the same way
-the existing G29 entry is guarded.
+**Adding a wheel model to the catalog** (maintainers): only add an id that is confirmed --
+observed on a real unit (Device Manager's "Hardware Ids", or a `usb-devices.log` line) or
+listed in the Linux kernel's Logitech wheel drivers (`drivers/hid/hid-ids.h`). Never use a
+VID/PID lookup site, and note that `046D:C52B` is Logitech's Unifying receiver, not a wheel: an
+early version listed it as a G29 mode, which could make LogiSteam share a mouse dongle instead
+of the wheel. Add the profile to `KnownWheelProfiles.All` and a case to
+`KnownWheelProfilesTests.cs`.
 
 ## Diagnosing connection flakiness
 
-`LogiSteam.WheelSide` continuously logs every USB device change (arrivals, departures, and moves
+On the Wheel PC, LogiSteam continuously logs every USB device change (arrivals, departures, and moves
 between bus locations) to `%LOCALAPPDATA%\LogiSteam\logs\usb-devices.log`, tagging Logitech-vendor
-devices and whichever one is currently selected. Right-click the tray icon -> **"Open USB Device
-Log"** to jump straight to it in Explorer. If the connection is bouncing, this log is the fastest
+devices and whichever one is currently selected. **Advanced > USB device log** jumps straight
+to it in Explorer. If the connection is bouncing, this log is the fastest
 way to see whether the device is genuinely disconnecting/moving at the USB level (which points to
 a cable/port/driver issue) versus something else -- this is the same kind of data used to track
 down the G29's bind-triggered recalibration and `usbipd-win`'s stub-driver swap, now built in
 instead of requiring a one-off diagnostic script each time.
 
-Both apps also run an always-on, unauthenticated, read-only TCP diagnostics endpoint (WheelSide:
-port 35896, GameSide: port 35897) that returns a live JSON snapshot of everything above plus the
+LogiSteam also runs an always-on, unauthenticated, read-only TCP diagnostics endpoint (port 35896
+while it is the Wheel PC, 35897 while it is the Game PC) that returns a live JSON snapshot of everything above plus the
 current attach/discovery state -- reachable from anywhere on the LAN, no need to be sitting at
 either machine. Query it with:
 
@@ -112,44 +100,46 @@ authentication by design (a deliberate tradeoff for a private home LAN) -- it on
 read-only status/device information, never anything sensitive, and there is no way to send
 commands back through it.
 
-Both apps also have a built-in **"Open Diagnostics..."** tray menu item, so most troubleshooting
+There is also a built-in **Advanced > Diagnostics** window in both roles, so most troubleshooting
 no longer needs a terminal at all:
 
 - **Connectivity** shows the same live JSON snapshot as the TCP endpoint above, auto-refreshing
-  every 2 seconds, with "Refresh Now" and "Copy to Clipboard" buttons. On `LogiSteam.GameSide`,
+  every 2 seconds, with "Refresh Now" and "Copy to Clipboard" buttons. On the Game PC,
   there's also a "Query Wheel PC" button (pre-filled with whichever Wheel PC it has last
   discovered) that fetches and displays that machine's live snapshot inline -- the in-app
   replacement for running `query-diagnostics.ps1` by hand.
 - **Input Test** lets you confirm raw wheel input is actually flowing: click "Start Test", then
   move the wheel / press pedals and buttons -- each raw HID report received appears as a
-  timestamped hex line. On `LogiSteam.WheelSide` it tests your currently-selected wheel; on
-  `LogiSteam.GameSide` (which tracks the attached device by bus id/port rather than hardware id)
+  timestamped hex line. On the Wheel PC it tests the identified wheel; on
+  the Game PC (which tracks the attached device by bus id/port rather than hardware id)
   pick the device from the dropdown first. If nothing appears while a game controller is
   connected and attached, that's a real problem worth investigating; a mouse or keyboard showing
   nothing is expected, since Windows exclusively locks their pointer/keystroke HID collections.
 
-Building the installer yourself (only needed if you change the source): publish both apps with
+Building the installer yourself (only needed if you change the source): publish the app with
 `dotnet publish` (see main `README.md`), then compile `installer/LogiSteam.Setup/LogiSteam.iss`
 with Inno Setup 6 (`ISCC.exe LogiSteam.iss`). The prerequisite installers are vendored, pinned
-copies in `installer/vendor/` (`usbipd-win_5.3.0_x64.msi`, `USBip-0.9.7.8-x64.exe`) -- both get
-embedded in the one combined installer regardless of which role is chosen at runtime (~125MB
-total), since Inno Setup can't know the user's choice at compile time. Re-download and re-pin
+copies in `installer/vendor/` (`usbipd-win_5.3.0_x64.msi`, `USBip-0.9.7.8-x64.exe`) -- both are
+embedded in the installer (about 77MB in total), since the role is chosen in the app, after
+installation. Re-download and re-pin
 them if you need a newer upstream version, and re-run the Phase 0 spike after doing so.
 
 ## Steady-state use (zero-config)
 
-1. Plug in the wheel on the Wheel PC (if not already).
-2. Launch both tray apps (optionally set both to run at login).
-3. Tray icon colors mean the same thing on both apps: **gray** = idle/waiting, **amber** =
-   in-progress or partially working, **green** = fully connected end-to-end, **red** = something's
-   actually broken. Hover or check the (disabled) top menu item for the specific status text.
-   - `LogiSteam.WheelSide` goes green once a Game PC has actually acked it back -- not just when
-     it's broadcasting into the void, but when it's confirmed something is listening.
-   - `LogiSteam.GameSide` goes green once it's attached the shared device.
+1. Plug in the wheel on the Wheel PC (if not already) and open G HUB on the Game PC.
+2. Start LogiSteam on both PCs (or let it start with Windows).
+3. The window shows one status line and a checklist. The colours mean the same thing in the
+   window and on the tray icon: **blue** = working on it (searching, connecting), **green** =
+   connected end to end, **amber** = needs your attention (G HUB not running, permission
+   needed), **red** = something is broken.
+   - On the Wheel PC it goes green once a Game PC has attached the wheel.
+   - On the Game PC it goes green once the wheel is attached locally.
 4. No IP addresses or bus ids ever need to be typed in -- discovery is automatic on the LAN.
 5. Start your Steam Remote Play/Steam Link session and play.
-6. On exit, `LogiSteam.GameSide` detaches cleanly; use its tray menu's "Detach now" as a manual
-   escape hatch if needed.
+6. Closing the window leaves LogiSteam running in the tray so the wheel stays connected; click
+   the tray icon to reopen it, right-click > Exit to quit. On exit (or when switched to Wheel
+   PC) the Game PC detaches the wheel cleanly. **Advanced > Reconnect the wheel** detaches and
+   re-attaches if it ever stops responding.
 
 ## Caveats
 
