@@ -140,6 +140,22 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Where the Donate button goes. LogiSteam is free; this is the only ask.</summary>
+    public const string DonateUrl = "https://www.paypal.com/donate/?hosted_button_id=NZJ7CCVL7Y5GS";
+
+    private void OnDonate(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(DonateUrl) { UseShellExecute = true })?.Dispose();
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            MessageBox.Show(this, $"LogiSteam couldn't open your browser. You can donate at:\n{DonateUrl}",
+                "LogiSteam", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
     private void OnAdvancedAction(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is RoleAction action)

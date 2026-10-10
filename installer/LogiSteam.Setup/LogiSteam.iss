@@ -10,7 +10,7 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\LogiSteam.Setup\LogiSteam.iss
 
 #define MyAppName "LogiSteam"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.0.1"
 #define MyAppPublisher "LogiSteam"
 #define AppExeName "LogiSteam.exe"
 #define UsbipdWinInstaller "usbipd-win_5.3.0_x64.msi"

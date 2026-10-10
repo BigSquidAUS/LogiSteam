@@ -66,7 +66,7 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<RoleAction> AdvancedActions { get; } = [];
 
     public string VersionText { get; } =
-        $"LogiSteam {typeof(MainViewModel).Assembly.GetName().Version?.ToString(2) ?? string.Empty}".TrimEnd();
+        $"LogiSteam {typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? string.Empty}".TrimEnd();
 
     /// <summary>First run: no role chosen yet, so the window asks which PC this is.</summary>
     public bool IsChoosingRole { get => _isChoosingRole; set => Set(ref _isChoosingRole, value); }

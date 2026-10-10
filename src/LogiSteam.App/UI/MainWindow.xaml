@@ -311,6 +311,13 @@
                     </ItemsControl>
                 </Border>
 
+                <Button Style="{StaticResource LinkButton}" Click="OnDonate" HorizontalAlignment="Center" Margin="0,10,0,0"
+                        ToolTip="LogiSteam is free. If it got your wheel working, you can say thanks with a donation (opens PayPal in your browser).">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xEB52;" FontSize="12" Foreground="#F26D8F" Margin="0,1,7,0" />
+                        <TextBlock Text="Donate" />
+                    </StackPanel>
+                </Button>
                 <TextBlock Text="{Binding VersionText}" Foreground="{StaticResource TextMuted}" FontSize="11"
                            HorizontalAlignment="Center" Margin="0,8,0,0" />
             </StackPanel>
@@ -368,6 +375,13 @@
 
             <TextBlock Text="You can change this any time with the switch at the top of the window." Foreground="{StaticResource TextMuted}"
                        FontSize="12" TextAlignment="Center" TextWrapping="Wrap" Margin="0,22,0,0" />
+            <Button Style="{StaticResource LinkButton}" Click="OnDonate" HorizontalAlignment="Center" Margin="0,22,0,0"
+                    ToolTip="LogiSteam is free. If it got your wheel working, you can say thanks with a donation (opens PayPal in your browser).">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Style="{StaticResource Icon}" Text="&#xEB52;" FontSize="12" Foreground="#F26D8F" Margin="0,1,7,0" />
+                    <TextBlock Text="Donate" />
+                </StackPanel>
+            </Button>
         </StackPanel>
     </Grid>
 </Window>
