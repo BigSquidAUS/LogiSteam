@@ -37,6 +37,13 @@ public sealed class WheelSideDiagnosticsSnapshot
     [JsonPropertyName("currentlyShared")]
     public bool? CurrentlyShared { get; init; }
 
+    /// <summary>Additional devices the user added, and what usbipd-win currently sees of each.</summary>
+    [JsonPropertyName("extraDevices")]
+    public IReadOnlyList<ExtraDeviceSummary> ExtraDevices { get; init; } = [];
+
+    [JsonPropertyName("lastAckAttachedBusIds")]
+    public IReadOnlyList<string>? LastAckAttachedBusIds { get; init; }
+
     [JsonPropertyName("lastAckFromHost")]
     public string? LastAckFromHost { get; init; }
 
@@ -54,6 +61,8 @@ public sealed class WheelSideDiagnosticsSnapshot
 
     public string ToJson() => JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
 }
+
+public sealed record ExtraDeviceSummary(string Name, string HardwareId, string? BusId, bool? Shared);
 
 public sealed record UsbDeviceSummary(string HardwareId, string Description, string DeviceId)
 {

@@ -10,7 +10,8 @@ namespace LogiSteam.Common.DeviceDetection;
 /// </summary>
 public static class HidProductNameProbe
 {
-    public static IReadOnlyDictionary<UsbHardwareId, string> GetProductNames(ushort vendorId)
+    /// <param name="vendorId">Limit to one vendor, or null for every HID device.</param>
+    public static IReadOnlyDictionary<UsbHardwareId, string> GetProductNames(ushort? vendorId)
     {
         var names = new Dictionary<UsbHardwareId, string>();
         try

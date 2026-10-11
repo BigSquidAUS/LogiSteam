@@ -230,7 +230,7 @@ internal sealed class AppController
 
         var state = UpdateNotices.Apply(_role.BuildDashboard(), new UpdateStatus(
             AppVersion.Current, _latestRelease?.Version, peer?.Name, peer?.Version, _updatePhase, _updateProgress, _updateError));
-        _viewModel.Apply(state, [.. _role.AdvancedActions, GHubRequirementAction()]);
+        _viewModel.Apply(state, [.. _role.AdvancedActions, GHubRequirementAction()], _role.PrimaryAction);
 
         _statusMenuItem.Text = state.Headline;
         _notifyIcon.Text = Truncate($"LogiSteam - {state.Headline}", 127);

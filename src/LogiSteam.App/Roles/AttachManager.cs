@@ -1,23 +1,39 @@
 using System.ComponentModel;
 using System.Net;
+using LogiSteam.Common.Dashboard;
 using LogiSteam.Common.Discovery;
 using LogiSteam.Common.GHub;
-using LogiSteam.Common.Updates;
 using LogiSteam.Common.Tray;
+using LogiSteam.Common.Updates;
 using LogiSteam.Common.UsbipInterop;
 
 namespace LogiSteam.Roles;
 
+/// <summary>One device a Wheel PC offers and what this Game PC has done with it.</summary>
+/// <param name="Port">The local usbip port it is attached on, when connected.</param>
+public sealed record DeviceLink(BeaconDevice Device, OfferedDeviceState State, int? Port = null, string? Error = null)
+{
+    public string Name => Device.Name ?? (Device.IsWheel ? "Racing wheel" : $"USB device {Device.HardwareIdText}");
+}
+
 /// <summary>
-/// Drives the Game PC's side of the zero-config handshake: as soon as a Wheel PC beacon shows
-/// the wheel shared, attach it automatically; detach cleanly if the beacon disappears or on app
-/// exit. This is the piece usbip-win2 itself doesn't provide (it has no auto-attach/policy
-/// engine, unlike usbipd-win's AutoBind policies on the Wheel PC side).
+/// Drives the Game PC's side of the zero-config handshake. Every beacon from a Wheel PC lists
+/// the devices it offers (the wheel, plus any additional devices the user added there); this
+/// reconciles what is attached locally against that list -- attaching what's newly offered,
+/// detaching what's gone or what the user switched off here, and re-attaching anything that
+/// silently died. This is the piece usbip-win2 itself doesn't provide (it has no
+/// auto-attach/policy engine, unlike usbipd-win's AutoBind policies on the Wheel PC side).
 ///
+/// Each device is handled independently, so one that refuses to attach never holds up the rest.
 /// Every beacon processed also gets a return ack sent to the Wheel PC (see AckSender), so the
-/// Wheel PC can show whether a Game PC currently sees it -- not just that it's broadcasting.
+/// Wheel PC can show which of its devices this PC has actually attached.
 /// </summary>
-public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip, GHubMonitor gHub)
+/// <param name="isReleased">
+/// Whether the user has switched a device (by "vvvv:pppp" hardware id) off for this PC. A
+/// released device is never attached, and is detached if it already is -- which is how a
+/// device added by mistake on the Wheel PC (its keyboard, say) can always be handed back from here.
+/// </param>
+public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip, GHubMonitor gHub, Func<string, bool>? isReleased = null)
 {
     // The G29 runs a ~10 second autocentering calibration on connect, during which an attach
     // attempt can fail or the device can otherwise be unresponsive. Without a cooldown, a failed
@@ -26,16 +42,22 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
     private static readonly TimeSpan AttachRetryCooldown = TimeSpan.FromSeconds(5);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private AttachedDevice? _attached;
-    private string? _attachedHost;
-    private DateTime? _lastFailedAttachUtc;
+    private readonly Func<string, bool> _isReleased = isReleased ?? (_ => false);
+
+    // Touched only while holding _gate.
+    private readonly Dictionary<string, AttachedDevice> _attached = [];
+    private readonly Dictionary<string, (DateTime AtUtc, string Error)> _failures = [];
+
+    // Replaced wholesale at the end of each reconcile, so other threads always read a consistent snapshot.
+    private volatile IReadOnlyList<DeviceLink> _links = [];
+    private volatile string? _attachedHost;
 
     public event Action<TrayStatus>? StatusChanged;
 
-    /// <summary>Currently attached device, if any -- read by RemoteDiagnosticsServer's snapshot builder.</summary>
-    public AttachedDevice? CurrentAttachment => _attached;
+    /// <summary>Every device the current Wheel PC offers, with what this PC has done about each.</summary>
+    public IReadOnlyList<DeviceLink> Links => _links;
 
-    /// <summary>The Wheel PC's address the current attachment came from, if any.</summary>
+    /// <summary>The Wheel PC's address the current attachments came from, if any.</summary>
     public string? AttachedHost => _attachedHost;
 
     public void Start()
@@ -48,123 +70,152 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
 
     private async void OnDiscoveredOrUpdated(DiscoveredWheelPc pc)
     {
-        // Deliberately NOT gated on pc.Beacon.Shared: usbipd-win's AutoBind policy only actually
-        // binds the device when a remote client requests to attach it -- that's the trigger, not
-        // a precondition. Waiting for "Shared: true" before ever attempting an attach would be a
-        // deadlock (it can only become true as a side effect of the attach we're refusing to try).
-        // The beacon's Shared flag is informational only; attach is attempted for any beacon that
-        // carries a bus id.
-        var host = pc.Address.ToString();
-        if (_attached is not null && _attachedHost == host)
+        // Beacons arrive every couple of seconds and an attach can take longer than that. One
+        // that arrives mid-reconcile is simply skipped (the next one picks up from the new
+        // state) rather than queued, so slow attaches never pile up into repeated work.
+        if (await _gate.WaitAsync(0).ConfigureAwait(false))
         {
-            // Already attached to this Wheel PC; nothing to do until it disappears, its bus id
-            // changes, or the local attachment turns out to have silently died (sleep/resume, a
-            // driver hiccup) -- the beacon alone can't tell us that, since the Wheel PC still
-            // sees its side as fine.
-            if (_attached.BusId != pc.Beacon.BusId)
+            try
             {
-                await ReattachAsync(pc, host).ConfigureAwait(false);
+                await ReconcileAsync(pc).ConfigureAwait(false);
             }
-            else if (!await IsAttachmentAliveAsync().ConfigureAwait(false))
+            finally
             {
-                StatusChanged?.Invoke(new TrayStatus("Attachment lost - reattaching...", TrayStatusLevel.Warning));
-                await ReattachAsync(pc, host).ConfigureAwait(false);
+                _gate.Release();
             }
-
-            await AckAsync(pc.Address).ConfigureAwait(false);
-            return;
-        }
-
-        if (!await _gate.WaitAsync(0).ConfigureAwait(false))
-        {
-            return; // an attach/detach is already in progress
-        }
-
-        try
-        {
-            var clearToAttach = _attached is null || await DetachInternalAsync().ConfigureAwait(false);
-            if (clearToAttach)
-            {
-                await AttachInternalAsync(pc, host).ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            _gate.Release();
         }
 
         await AckAsync(pc.Address).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Confirms the port we think we're attached to is still actually imported locally. A query
-    /// failure fails open (treated as "still alive") rather than triggering a reattach itself --
-    /// a transient `usbip port` hiccup shouldn't cause detach/reattach thrashing on its own; only
-    /// a successful query that genuinely omits our port is trusted as "it died."
-    /// </summary>
-    private async Task<bool> IsAttachmentAliveAsync()
+    private async Task ReconcileAsync(DiscoveredWheelPc pc)
     {
-        if (_attached is null)
+        var host = pc.Address.ToString();
+
+        // Attached to a different Wheel PC: let go of its devices before taking this one's.
+        if (_attached.Count > 0 && _attachedHost != host && !await DetachAllInternalAsync().ConfigureAwait(false))
         {
-            return true;
+            return;
         }
 
+        // Deliberately NOT gated on pc.Beacon.Shared: usbipd-win's AutoBind policy only actually
+        // binds a device when a remote client requests to attach it -- that's the trigger, not
+        // a precondition. Waiting for "Shared: true" before ever attempting an attach would be a
+        // deadlock (it can only become true as a side effect of the attach we're refusing to try).
+        var offered = pc.Beacon.AllDevices();
+        var offeredBusIds = offered.Select(d => d.BusId).ToHashSet();
+
+        // `usbip port` tells us whether what we think is attached still is: an attachment can
+        // silently die (sleep/resume, a driver hiccup) and the beacon alone can't reveal that,
+        // since the Wheel PC still sees its side as fine.
+        var livePorts = _attached.Count > 0 ? await TryListPortsAsync().ConfigureAwait(false) : null;
+        var plan = AttachPlanner.Plan(
+            offered,
+            _attached.ToDictionary(pair => pair.Key, pair => pair.Value.Port),
+            livePorts,
+            _isReleased,
+            busId => _failures.TryGetValue(busId, out var failure) && DateTime.UtcNow - failure.AtUtc < AttachRetryCooldown);
+
+        // 1. Detach what is no longer offered (unplugged, removed on the Wheel PC, or its bus id
+        //    changed) and what the user switched off for this PC.
+        foreach (var busId in plan.Detach)
+        {
+            await DetachOneInternalAsync(_attached[busId]).ConfigureAwait(false);
+        }
+
+        // 2. Stop tracking attachments that died on their own.
+        foreach (var busId in plan.Forget)
+        {
+            _attached.Remove(busId);
+        }
+
+        // 3. Attach what is offered, wanted here, and not attached.
+        foreach (var device in plan.Attach)
+        {
+            if (_attached.ContainsKey(device.BusId))
+            {
+                continue; // its detach in step 1 didn't take; try again next beacon
+            }
+
+            var name = device.Name ?? "device";
+            Publish(pc, offered, new TrayStatus($"Attaching {name} from {pc.Beacon.HostName}...", TrayStatusLevel.Warning));
+            try
+            {
+                _attached[device.BusId] = await usbip.AttachAsync(host, device.BusId).ConfigureAwait(false);
+                _failures.Remove(device.BusId);
+            }
+            catch (UsbipCommandException ex)
+            {
+                _failures[device.BusId] = (DateTime.UtcNow, $"{name} couldn't be attached to this PC ({ex.Message.Trim()}). Trying again shortly.");
+            }
+            catch (Win32Exception)
+            {
+                _failures[device.BusId] = (DateTime.UtcNow,
+                    "usbip-win2, the tool LogiSteam uses to connect devices, isn't installed on this PC. Run the LogiSteam installer again to add it.");
+            }
+        }
+
+        foreach (var staleBusId in _failures.Keys.Where(busId => !offeredBusIds.Contains(busId)).ToList())
+        {
+            _failures.Remove(staleBusId);
+        }
+
+        _attachedHost = _attached.Count > 0 ? host : null;
+        Publish(pc, offered, Summarize(pc, offered));
+    }
+
+    /// <summary>One line for the tray tooltip and diagnostics: the wheel's state if a wheel is offered, else the first device's.</summary>
+    private TrayStatus Summarize(DiscoveredWheelPc pc, IReadOnlyList<BeaconDevice> offered)
+    {
+        var primary = offered.FirstOrDefault(d => d.IsWheel) ?? offered.FirstOrDefault();
+        if (primary is null)
+        {
+            return new TrayStatus($"{pc.Beacon.HostName} isn't offering any devices", TrayStatusLevel.Idle);
+        }
+
+        var name = primary.Name ?? "device";
+        if (_attached.TryGetValue(primary.BusId, out var attachment))
+        {
+            var others = _attached.Count - 1;
+            var suffix = others > 0 ? $", plus {others} more" : string.Empty;
+            return new TrayStatus($"Attached - {name} from {pc.Beacon.HostName} (local port {attachment.Port}){suffix}", TrayStatusLevel.Connected);
+        }
+
+        if (_isReleased(primary.HardwareIdText))
+        {
+            return new TrayStatus($"{name} from {pc.Beacon.HostName} is switched off for this PC", TrayStatusLevel.Idle);
+        }
+
+        return _failures.TryGetValue(primary.BusId, out var failure)
+            ? new TrayStatus(failure.Error, TrayStatusLevel.Error)
+            : new TrayStatus($"Attaching {name} from {pc.Beacon.HostName}...", TrayStatusLevel.Warning);
+    }
+
+    private void Publish(DiscoveredWheelPc pc, IReadOnlyList<BeaconDevice> offered, TrayStatus status)
+    {
+        _links = offered
+            .Select(device =>
+                _attached.TryGetValue(device.BusId, out var attachment) ? new DeviceLink(device, OfferedDeviceState.Connected, attachment.Port)
+                : _isReleased(device.HardwareIdText) ? new DeviceLink(device, OfferedDeviceState.Released)
+                : _failures.TryGetValue(device.BusId, out var failure) ? new DeviceLink(device, OfferedDeviceState.Failed, Error: failure.Error)
+                : new DeviceLink(device, OfferedDeviceState.Connecting))
+            .ToList();
+        StatusChanged?.Invoke(status);
+    }
+
+    private async Task<IReadOnlyList<int>?> TryListPortsAsync()
+    {
         try
         {
-            var ports = await usbip.ListPortsAsync().ConfigureAwait(false);
-            return ports.Contains(_attached.Port);
+            return await usbip.ListPortsAsync().ConfigureAwait(false);
         }
         catch (UsbipCommandException)
         {
-            return true;
+            return null;
         }
         catch (Win32Exception)
         {
-            return true;
-        }
-    }
-
-    private async Task ReattachAsync(DiscoveredWheelPc pc, string host)
-    {
-        await _gate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            if (await DetachInternalAsync().ConfigureAwait(false))
-            {
-                await AttachInternalAsync(pc, host).ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    private async Task AttachInternalAsync(DiscoveredWheelPc pc, string host)
-    {
-        if (_lastFailedAttachUtc is { } lastFailure && DateTime.UtcNow - lastFailure < AttachRetryCooldown)
-        {
-            return; // still cooling down from a recent failure; let the device settle before retrying
-        }
-
-        StatusChanged?.Invoke(new TrayStatus($"Attaching {WheelName(pc)} from {pc.Beacon.HostName}...", TrayStatusLevel.Warning));
-        try
-        {
-            var attached = await usbip.AttachAsync(host, pc.Beacon.BusId).ConfigureAwait(false);
-            _attached = attached;
-            _attachedHost = host;
-            _lastFailedAttachUtc = null;
-            StatusChanged?.Invoke(new TrayStatus($"Attached - {WheelName(pc)} from {pc.Beacon.HostName} (local port {attached.Port})", TrayStatusLevel.Connected));
-        }
-        catch (UsbipCommandException ex)
-        {
-            _lastFailedAttachUtc = DateTime.UtcNow;
-            StatusChanged?.Invoke(new TrayStatus($"The wheel couldn't be attached to this PC ({ex.Message.Trim()}). Trying again shortly.", TrayStatusLevel.Error));
-        }
-        catch (Win32Exception)
-        {
-            _lastFailedAttachUtc = DateTime.UtcNow;
-            StatusChanged?.Invoke(new TrayStatus("usbip-win2, the tool LogiSteam uses to connect the wheel, isn't installed on this PC. Run the LogiSteam installer again to add it.", TrayStatusLevel.Error));
+            return null;
         }
     }
 
@@ -172,13 +223,21 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
     {
         if (_attachedHost != address.ToString())
         {
+            // Nothing attached from it, but its devices shouldn't linger in the list.
+            if (_attachedHost is null)
+            {
+                _links = [];
+                StatusChanged?.Invoke(new TrayStatus("Searching for a Wheel PC...", TrayStatusLevel.Idle));
+            }
+
             return;
         }
 
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await DetachInternalAsync().ConfigureAwait(false);
+            await DetachAllInternalAsync().ConfigureAwait(false);
+            _links = [];
             StatusChanged?.Invoke(new TrayStatus("Wheel PC lost - detached, searching again...", TrayStatusLevel.Idle));
         }
         finally
@@ -188,21 +247,30 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
     }
 
     /// <returns>
-    /// True once the local attachment is confirmed clear (or there was none to begin with); false
-    /// if a real attachment is still occupying the port, so callers should not attempt a fresh
-    /// attach this cycle.
+    /// True once every local attachment is confirmed clear (or there were none); false if a real
+    /// attachment is still occupying a port, so callers should not attach afresh this cycle.
     /// </returns>
-    private async Task<bool> DetachInternalAsync()
+    private async Task<bool> DetachAllInternalAsync()
     {
-        if (_attached is null)
+        var allClear = true;
+        foreach (var attachment in _attached.Values.ToList())
         {
-            return true;
+            allClear &= await DetachOneInternalAsync(attachment).ConfigureAwait(false);
         }
 
-        var port = _attached.Port;
+        if (_attached.Count == 0)
+        {
+            _attachedHost = null;
+        }
+
+        return allClear;
+    }
+
+    private async Task<bool> DetachOneInternalAsync(AttachedDevice attachment)
+    {
         try
         {
-            await usbip.DetachAsync(port).ConfigureAwait(false);
+            await usbip.DetachAsync(attachment.Port).ConfigureAwait(false);
         }
         catch (UsbipCommandException)
         {
@@ -217,58 +285,48 @@ public sealed class AttachManager(BeaconListener listener, UsbipCliWrapper usbip
         // port is actually gone before forgetting about it. Otherwise a detach that silently fails
         // leaves a real local attachment orphaned from our own tracking, and every subsequent
         // attach attempt then fails with "device busy (already exported)" against a "ghost"
-        // attachment we no longer know we have.
-        if (await IsPortStillImportedAsync(port).ConfigureAwait(false))
+        // attachment we no longer know we have. A failed query here is taken as "it's clear":
+        // the worst case is a bounded attach-retry-with-cooldown, not a stuck port.
+        if (await TryListPortsAsync().ConfigureAwait(false) is { } ports && ports.Contains(attachment.Port))
         {
             return false;
         }
 
-        _attached = null;
-        _attachedHost = null;
+        _attached.Remove(attachment.BusId);
         return true;
     }
 
-    /// <summary>
-    /// Used only to confirm a detach actually took effect. Unlike <see cref="IsAttachmentAliveAsync"/>,
-    /// a query failure here fails toward "assume it's clear" (matches this method's pre-existing,
-    /// long-standing behavior for the common case) -- if that assumption is wrong, the worst case is
-    /// the same bounded attach-retry-with-cooldown failure this fix is closing, not a crash.
-    /// </summary>
-    private async Task<bool> IsPortStillImportedAsync(int port)
+    private Task AckAsync(IPAddress wheelPcAddress)
     {
-        try
-        {
-            var ports = await usbip.ListPortsAsync().ConfigureAwait(false);
-            return ports.Contains(port);
-        }
-        catch (UsbipCommandException)
-        {
-            return false;
-        }
-        catch (Win32Exception)
-        {
-            return false;
-        }
-    }
+        var fromThisHost = _attachedHost == wheelPcAddress.ToString();
+        var links = _links;
+        var attachedBusIds = fromThisHost
+            ? links.Where(l => l.State == OfferedDeviceState.Connected).Select(l => l.Device.BusId).ToList()
+            : [];
 
-    private Task AckAsync(IPAddress wheelPcAddress) =>
-        AckSender.SendAsync(wheelPcAddress, new AckMessage
+        return AckSender.SendAsync(wheelPcAddress, new AckMessage
         {
             HostName = Environment.MachineName,
-            Attached = _attachedHost == wheelPcAddress.ToString(),
+            // What a Wheel PC older than 2.2 reads: whether the one device it offers is attached.
+            Attached = fromThisHost && links.Count > 0 && attachedBusIds.Contains(links[0].Device.BusId),
+            AttachedBusIds = attachedBusIds,
             GHubRunning = gHub.IsRunning,
             AppVersion = AppVersion.Current,
         });
+    }
 
-    private static string WheelName(DiscoveredWheelPc pc) => pc.Beacon.DeviceName ?? "wheel";
-
-    /// <summary>Called on app shutdown so a stale VHCI port doesn't linger after LogiSteam exits.</summary>
+    /// <summary>
+    /// Detaches everything now. Used on shutdown (so stale VHCI ports don't linger after LogiSteam
+    /// exits), on a manual reconnect, and when the user switches a device off: the next beacon
+    /// re-attaches whatever is still wanted.
+    /// </summary>
     public async Task DetachForShutdownAsync()
     {
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await DetachInternalAsync().ConfigureAwait(false);
+            await DetachAllInternalAsync().ConfigureAwait(false);
+            _links = _links.Select(l => l.State == OfferedDeviceState.Connected ? l with { State = OfferedDeviceState.Connecting, Port = null } : l).ToList();
         }
         finally
         {

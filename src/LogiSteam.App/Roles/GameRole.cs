@@ -11,7 +11,7 @@ namespace LogiSteam.Roles;
 
 /// <summary>
 /// The Game PC end of LogiSteam: listens for a Wheel PC's beacon and lets
-/// <see cref="AttachManager"/> attach/detach the shared wheel automatically.
+/// <see cref="AttachManager"/> attach/detach the devices it offers automatically.
 /// </summary>
 internal sealed class GameRole : IRole
 {
@@ -21,6 +21,10 @@ internal sealed class GameRole : IRole
     private readonly BeaconListener _listener = new();
     private readonly AttachManager _attachManager;
     private readonly RemoteDiagnosticsServer _diagnosticsServer;
+    private readonly JsonListStore<string> _releasedStore = DeviceStores.ReleasedDevices();
+
+    // Read from AttachManager's thread, replaced (never mutated) from the UI thread.
+    private volatile IReadOnlySet<string> _released;
 
     private GameSideDiagnosticsForm? _diagnosticsForm;
     private TrayStatus _currentStatus = new("Starting...", TrayStatusLevel.Idle);
@@ -31,7 +35,8 @@ internal sealed class GameRole : IRole
     {
         _gHub = gHub;
         _requireGHubOnWheelPc = requireGHubOnWheelPc;
-        _attachManager = new AttachManager(_listener, new UsbipCliWrapper(), gHub);
+        _released = _releasedStore.Load().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _attachManager = new AttachManager(_listener, new UsbipCliWrapper(), gHub, hardwareId => _released.Contains(hardwareId));
         _diagnosticsServer = new RemoteDiagnosticsServer(DiagnosticsPort.GameSide, BuildDiagnosticsSnapshotJson);
     }
 
@@ -62,17 +67,32 @@ internal sealed class GameRole : IRole
         _diagnosticsServer.Dispose();
     }
 
+    public RoleAction? PrimaryAction => null;
+
     public IReadOnlyList<RoleAction> AdvancedActions
     {
         get
         {
             var actions = new List<RoleAction>();
-            if (_attachManager.CurrentAttachment is not null)
+            var links = _attachManager.Links;
+            var from = CurrentWheelPc()?.Beacon.HostName ?? "the Wheel PC";
+
+            if (links.Any(l => l.State == OfferedDeviceState.Connected))
             {
-                actions.Add(new("Reconnect the wheel", "Disconnect it and connect again. Try this if the wheel stops responding.", "", Reconnect));
+                actions.Add(new("Reconnect", "Disconnect and connect again. Try this if a device stops responding.", "", Reconnect));
             }
 
-            actions.Add(new("Diagnostics", "Connection details and a live wheel input test.", "", OpenDiagnostics));
+            // Every offered device can be handed back from here -- the way out if something was
+            // added on the Wheel PC by mistake and is now out of reach there.
+            foreach (var link in links)
+            {
+                var hardwareId = link.Device.HardwareIdText;
+                actions.Add(link.State == OfferedDeviceState.Released
+                    ? new($"Use {link.Name} on this PC", $"It's currently left with {from}.", "", () => SetReleased(hardwareId, false))
+                    : new($"Stop using {link.Name} on this PC", $"Hands it back to {from}, where it works normally again.", "", () => SetReleased(hardwareId, true)));
+            }
+
+            actions.Add(new("Diagnostics", "Connection details and a live input test.", "", OpenDiagnostics));
             return actions;
         }
     }
@@ -80,20 +100,28 @@ internal sealed class GameRole : IRole
     public DashboardState BuildDashboard()
     {
         var wheelPc = CurrentWheelPc();
-        var attached = _attachManager.CurrentAttachment is not null;
+        var links = wheelPc is null ? [] : _attachManager.Links;
+        var wheel = links.FirstOrDefault(l => l.Device.IsWheel);
 
-        return GameSideDashboard.Build(
-            new GameSideInputs(
-                WheelPcName: wheelPc?.Beacon.HostName,
-                WheelName: wheelPc?.Beacon.DeviceName,
-                Attached: attached,
-                Problem: !attached && _currentStatus.Level == TrayStatusLevel.Error ? _currentStatus.Text : null),
-            new GHubStatus(
+        var inputs = new GameSideInputs(
+            WheelPcName: wheelPc?.Beacon.HostName,
+            WheelName: wheel?.Name ?? wheelPc?.Beacon.DeviceName,
+            Attached: wheel?.State == OfferedDeviceState.Connected,
+            Problem: wheel?.Error)
+        {
+            Devices = links.Select(l => new OfferedDeviceStatus(l.Name, l.Device.IsWheel, l.State, l.Error)).ToList(),
+        };
+
+        // G HUB only matters when a Logitech wheel is on offer, not for a lone HOTAS or Stream Deck.
+        var wheelInvolved = links.Count == 0 || wheel is not null;
+        return GameSideDashboard.Build(inputs, wheelInvolved
+            ? new GHubStatus(
                 RunningHere: _gHub.IsRunning,
                 InstalledHere: GHubMonitor.FindInstalledExecutable() is not null,
                 RunningOnPeer: wheelPc?.Beacon.GHubRunning,
                 PeerName: wheelPc?.Beacon.HostName,
-                RequiredOnPeer: _requireGHubOnWheelPc()));
+                RequiredOnPeer: _requireGHubOnWheelPc())
+            : null);
     }
 
     public (string Name, string? Version)? Peer =>
@@ -114,15 +142,26 @@ internal sealed class GameRole : IRole
     /// A sleep/resume cycle can leave the beacon listener's UdpClient silently dead -- Windows
     /// often power-cycles the NIC during suspend, even though this process (and everything
     /// subscribed to the listener, like AttachManager) survives untouched. Restarting the
-    /// listener's socket in place on resume is enough: AttachManager's existing attach-liveness
-    /// check (see AttachManager.IsAttachmentAliveAsync) already self-heals a dead local
-    /// attachment on the next beacon it receives, so simply getting beacons flowing again closes
-    /// the loop without needing any additional resume-specific recovery logic here.
+    /// listener's socket in place on resume is enough: AttachManager re-checks its attachments
+    /// against `usbip port` on every beacon, so simply getting beacons flowing again closes the
+    /// loop without needing any additional resume-specific recovery logic here.
     /// </summary>
     public void OnResume() => _listener.Restart();
 
-    // Detaching is enough: the next beacon (every couple of seconds) attaches it again.
+    // Detaching is enough: the next beacon (every couple of seconds) attaches everything again.
     private async void Reconnect() => await _attachManager.DetachForShutdownAsync();
+
+    /// <summary>Switches an offered device off (or back on) for this PC. Takes effect on the next beacon.</summary>
+    private void SetReleased(string hardwareId, bool released)
+    {
+        var updated = _released.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (released ? updated.Add(hardwareId) : updated.Remove(hardwareId))
+        {
+            _released = updated;
+            _releasedStore.Save(updated);
+            Changed?.Invoke();
+        }
+    }
 
     private void OpenDiagnostics()
     {
@@ -138,14 +177,20 @@ internal sealed class GameRole : IRole
 
     internal string BuildDiagnosticsSnapshotJson()
     {
+        var links = _attachManager.Links;
+        var primary = links.FirstOrDefault(l => l.Device.IsWheel && l.State == OfferedDeviceState.Connected)
+            ?? links.FirstOrDefault(l => l.State == OfferedDeviceState.Connected);
+
         var snapshot = new GameSideDiagnosticsSnapshot
         {
             HostName = Environment.MachineName,
             StatusText = _currentStatus.Text,
             StatusLevel = _currentStatus.Level.ToString(),
             AttachedFromHost = _attachManager.AttachedHost,
-            AttachedBusId = _attachManager.CurrentAttachment?.BusId,
-            AttachedLocalPort = _attachManager.CurrentAttachment?.Port,
+            AttachedBusId = primary?.Device.BusId,
+            AttachedLocalPort = primary?.Port,
+            Devices = links.Select(l => new OfferedDeviceSummary(
+                l.Name, l.Device.HardwareIdText, l.Device.BusId, l.Device.IsWheel, l.State.ToString(), l.Port, l.Error)).ToList(),
             DiscoveredWheelPcs = _listener.CurrentlyVisible.Select(DiscoveredWheelPcSummary.From).ToList(),
         };
 

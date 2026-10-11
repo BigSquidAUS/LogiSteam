@@ -54,6 +54,7 @@ public sealed class MainViewModel : ObservableObject
     private string _detail = string.Empty;
     private TrayStatusLevel _level = TrayStatusLevel.Idle;
     private string? _detectedWheelHint;
+    private RoleAction? _primaryAction;
 
     /// <summary>The user picked a role (the switch, or a first-run card).</summary>
     public event Action<AppRole>? RoleRequested;
@@ -127,12 +128,29 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>First run only: the name of a racing wheel found on this PC, to nudge the right choice.</summary>
     public string? DetectedWheelHint { get => _detectedWheelHint; set => Set(ref _detectedWheelHint, value); }
 
+    /// <summary>The role's one dashboard button ("Add another USB device" on the Wheel PC), if it has one.</summary>
+    public RoleAction? PrimaryAction
+    {
+        get => _primaryAction;
+        private set
+        {
+            // RoleAction carries a delegate, so only the title decides whether the button changed.
+            var changed = _primaryAction?.Title != value?.Title;
+            _primaryAction = value;
+            if (changed)
+            {
+                Raise(nameof(PrimaryAction));
+            }
+        }
+    }
+
     public void RequestRole(AppRole role) => RoleRequested?.Invoke(role);
 
     public void RequestWarningAction(string warningId) => WarningActionRequested?.Invoke(warningId);
 
-    public void Apply(DashboardState state, IReadOnlyList<RoleAction> advancedActions)
+    public void Apply(DashboardState state, IReadOnlyList<RoleAction> advancedActions, RoleAction? primaryAction = null)
     {
+        PrimaryAction = primaryAction;
         Headline = state.Headline;
         Detail = state.Detail;
         Level = state.Level;

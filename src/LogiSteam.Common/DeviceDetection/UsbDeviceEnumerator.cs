@@ -43,6 +43,66 @@ public static class UsbDeviceEnumerator
     }
 
     /// <summary>
+    /// Lists plugged-in USB devices for the "add another USB device" list: each with the best
+    /// available name and a verdict on whether it's sensible to share (see
+    /// <see cref="UsbDeviceClassifier"/>). The verdict needs every PnP node belonging to the
+    /// device, not just its top-level USB one -- a keyboard only says "Keyboard" on the HID node
+    /// beneath it -- so this reads HID nodes too and groups everything by VID:PID.
+    /// </summary>
+    public static IReadOnlyList<UsbDeviceDetails> EnumerateWithDetails()
+    {
+        var usbNodes = new List<UsbDeviceInfo>();
+        var classes = new Dictionary<UsbHardwareId, List<string?>>();
+        var services = new Dictionary<UsbHardwareId, List<string?>>();
+        var names = new Dictionary<UsbHardwareId, List<string?>>();
+
+        using (var searcher = new ManagementObjectSearcher(
+            "SELECT DeviceID, Name, Description, PNPClass, Service FROM Win32_PnPEntity WHERE DeviceID LIKE 'USB%' OR DeviceID LIKE 'HID%'"))
+        using (var results = searcher.Get())
+        {
+            foreach (var item in results)
+            {
+                using (item)
+                {
+                    var deviceId = item["DeviceID"] as string;
+                    if (deviceId is null || !UsbHardwareId.TryParseFromInstanceId(deviceId, out var hardwareId))
+                    {
+                        continue;
+                    }
+
+                    if (!classes.TryGetValue(hardwareId, out var deviceClasses))
+                    {
+                        classes[hardwareId] = deviceClasses = [];
+                        services[hardwareId] = [];
+                        names[hardwareId] = [];
+                    }
+
+                    names[hardwareId].Add(item["Name"] as string);
+
+                    deviceClasses.Add(item["PNPClass"] as string);
+                    services[hardwareId].Add(item["Service"] as string);
+
+                    if (deviceId.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase))
+                    {
+                        usbNodes.Add(new UsbDeviceInfo(hardwareId, item["Name"] as string ?? item["Description"] as string ?? deviceId, deviceId));
+                    }
+                }
+            }
+        }
+
+        var productNames = HidProductNameProbe.GetProductNames(vendorId: null);
+        return DeduplicateByHardwareId(usbNodes)
+            .Select(info =>
+            {
+                productNames.TryGetValue(info.HardwareId, out var productName);
+                var (advice, reason) = UsbDeviceClassifier.Classify(classes[info.HardwareId], services[info.HardwareId]);
+                return new UsbDeviceDetails(
+                    info, UsbDeviceClassifier.ChooseDisplayName(info.HardwareId, info.Description, productName, names[info.HardwareId]), advice, reason);
+            })
+            .ToList();
+    }
+
+    /// <summary>
     /// A single physical composite USB device (e.g. a wheel base with a keyboard-emulation
     /// interface, a joystick/FFB interface, etc.) usually shows up as several separate PnP
     /// entries sharing one VID:PID but with different "&amp;MI_xx" function suffixes on their

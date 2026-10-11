@@ -14,7 +14,7 @@
     <AssemblyName>LogiSteam</AssemblyName>
     <RootNamespace>LogiSteam</RootNamespace>
     <ApplicationIcon>Assets\LogiSteam.ico</ApplicationIcon>
-    <Version>2.1.0</Version>
+    <Version>2.2.0</Version>
   </PropertyGroup>
 
   <!-- WPF is the UI; Windows Forms is only here for the tray icon and the diagnostics window.

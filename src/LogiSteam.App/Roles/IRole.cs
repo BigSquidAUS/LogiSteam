@@ -28,6 +28,9 @@ internal interface IRole
     /// <summary>The PC at the other end, if one is currently connected, and the LogiSteam version it reported (null before 2.1).</summary>
     (string Name, string? Version)? Peer { get; }
 
+    /// <summary>The one action offered as a button on the dashboard itself (not tucked under Advanced), if the role has one.</summary>
+    RoleAction? PrimaryAction { get; }
+
     IReadOnlyList<RoleAction> AdvancedActions { get; }
 
     /// <summary>Handles the button on a warning this role raised (see <see cref="DashboardWarning.Id"/>).</summary>

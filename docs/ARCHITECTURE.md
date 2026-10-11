@@ -218,3 +218,30 @@ Installing is always started by the user clicking Update. It needs a Windows ele
 and drops the wheel for a few seconds, neither of which should happen unprompted mid-race. The
 app stops its role cleanly (detaching the wheel), runs the installer with `/SILENT`, and the
 installer restarts the new version as the signed-in user.
+
+## Additional devices
+
+The Wheel PC can share more than the wheel. The user adds devices by name (`AddDeviceWindow`);
+they are remembered by hardware id (`wheelside-extra-devices.json`) and offered whenever they
+are plugged in. A beacon now carries a `devices` list (the wheel first, flagged `isWheel`), and
+an ack carries `attachedBusIds`. The original single-device fields are still filled in with the
+first device, so a 2.1 peer keeps working with just that one.
+
+On the Game PC, `AttachPlanner` is the pure decision step: from what is offered, what is
+attached, which local ports are still alive and what the user has switched off, it returns what
+to detach, forget and attach. `AttachManager` carries that plan out, one device at a time, so a
+device that won't attach never blocks the others, and a beacon arriving mid-reconcile is skipped
+rather than queued.
+
+Guard rails, because the list is every USB device on the PC (`UsbDeviceClassifier`, from the
+Windows device classes and driver services on the device and the nodes beneath it):
+
+- **Never offered:** storage, network adapters, Bluetooth adapters, hubs.
+- **Offered with an explicit confirmation:** keyboards and mice (it stops working on the Wheel
+  PC while attached), audio and video (poor over USB/IP).
+- **Always reversible from the Game PC:** each offered device can be switched off there
+  (`gameside-released-devices.json`), which detaches it and stops re-attaching it. That is the
+  way back if the Wheel PC's own keyboard or mouse was added by mistake.
+
+G HUB only applies when a Logitech wheel is involved, so its checklist row and warnings are
+dropped for someone sharing only other devices.

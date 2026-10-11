@@ -31,6 +31,9 @@ the gaming PC sees the actual wheel: full steering resolution, pedals, shifter a
 - **Finds your wheel by itself.** Plug it in and LogiSteam identifies it. There is no device
   list to pick from and nothing to configure.
 - **Finds your other PC by itself.** No IP addresses to type.
+- **Brings your other gear along.** Add pedals, a shifter, a handbrake, a button box, a Stream
+  Deck or a HOTAS joystick with one click, and they connect alongside the wheel. No wheel? You
+  can share just those.
 - **One app for both PCs.** Install the same LogiSteam on each and flip a switch to say which is
   which.
 - **Tells you what is happening in plain words**, with a checklist of how far the connection has
@@ -80,6 +83,20 @@ Developed and tested on a **G29**. Reports for other models are very welcome.
 If your wheel isn't found, open **Advanced > Choose the wheel manually** and pick it from the
 list. Any USB device can be shared this way.
 
+## Adding more devices
+
+On the Wheel PC, click **Add another USB device** and pick the device by name. It gets its own
+line in the checklist on both PCs, and Windows asks for permission once per device.
+
+- Storage drives, network and Bluetooth adapters and USB hubs are never listed, because sharing
+  them would break the PC or the connection.
+- A keyboard or mouse asks you to confirm first: while it is connected to the Game PC it stops
+  working on the Wheel PC. Many button boxes and macro pads count as keyboards, which is why it
+  is allowed at all.
+- If you add something by mistake, you can hand it back from **either** PC: **Advanced > Remove**
+  on the Wheel PC, or **Advanced > Stop using ... on this PC** on the Game PC.
+- Two identical devices (the same model twice) can't be told apart, so adding one adds both.
+
 ## Troubleshooting
 
 | What you see | What to try |
@@ -89,6 +106,7 @@ list. Any USB device can be shared this way.
 | Amber "G HUB isn't running" warning | Open Logitech G HUB on the PC named in the warning. |
 | The wheel stops responding mid-session | On the Game PC: **Advanced > Reconnect the wheel**. |
 | The wheel misbehaves even though everything is green | Turn on **Advanced > G HUB on the Wheel PC: required** on both PCs, and open G HUB on the Wheel PC too. |
+| An added device shows "Couldn't connect" | The wheel keeps working regardless. Unplug and replug the device, or remove it and add it again. Audio and video devices often don't cope with being shared. |
 | Still stuck | **Advanced > Diagnostics** shows connection details you can copy into an [issue](https://github.com/BigSquidAUS/LogiSteam/issues). |
 
 ## Good to know

@@ -142,6 +142,8 @@ public partial class MainWindow : Window
 
     private void OnDonate(object sender, RoutedEventArgs e) => DonateWindow.OpenDonationPage(this);
 
+    private void OnPrimaryAction(object sender, RoutedEventArgs e) => _viewModel.PrimaryAction?.Invoke();
+
     private void OnAdvancedAction(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is RoleAction action)

@@ -41,6 +41,23 @@ public sealed class BeaconMessage
     [JsonPropertyName("appVersion")]
     public string? AppVersion { get; init; }
 
+    /// <summary>
+    /// Every device on offer, the wheel first if there is one. Null from a version before 2.2,
+    /// which only ever offered the single device described by the fields above. Those fields
+    /// are still filled in (with the first device here) so an older Game PC keeps working.
+    /// </summary>
+    [JsonPropertyName("devices")]
+    public IReadOnlyList<BeaconDevice>? Devices { get; init; }
+
+    /// <summary>The devices on offer whichever version sent the beacon.</summary>
+    public IReadOnlyList<BeaconDevice> AllDevices()
+    {
+        var devices = Devices is { Count: > 0 }
+            ? Devices
+            : [new BeaconDevice { BusId = BusId, VendorId = VendorId, ProductId = ProductId, Name = DeviceName, IsWheel = true }];
+        return devices.Where(d => !string.IsNullOrWhiteSpace(d.BusId)).ToList();
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

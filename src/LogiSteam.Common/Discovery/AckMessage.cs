@@ -29,6 +29,18 @@ public sealed class AckMessage
     [JsonPropertyName("appVersion")]
     public string? AppVersion { get; init; }
 
+    /// <summary>
+    /// Bus ids of every device the Game PC has attached. Null from a version before 2.2, where
+    /// <see cref="Attached"/> alone says whether the one offered device is attached.
+    /// </summary>
+    [JsonPropertyName("attachedBusIds")]
+    public IReadOnlyList<string>? AttachedBusIds { get; init; }
+
+    /// <summary>Whether the Game PC reports the device on this bus id as attached.</summary>
+    /// <param name="isPrimary">True for the first device in the beacon, the only one an older Game PC attaches.</param>
+    public bool HasAttached(string busId, bool isPrimary) =>
+        AttachedBusIds is not null ? AttachedBusIds.Contains(busId) : isPrimary && Attached;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

@@ -28,11 +28,18 @@ public sealed class GameSideDiagnosticsSnapshot
     [JsonPropertyName("attachedLocalPort")]
     public int? AttachedLocalPort { get; init; }
 
+    /// <summary>Every device the current Wheel PC offers and what this PC has done with it.</summary>
+    [JsonPropertyName("devices")]
+    public IReadOnlyList<OfferedDeviceSummary> Devices { get; init; } = [];
+
     [JsonPropertyName("discoveredWheelPcs")]
     public IReadOnlyList<DiscoveredWheelPcSummary> DiscoveredWheelPcs { get; init; } = [];
 
     public string ToJson() => JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
 }
+
+public sealed record OfferedDeviceSummary(
+    string Name, string HardwareId, string BusId, bool IsWheel, string State, int? LocalPort, string? Error);
 
 public sealed record DiscoveredWheelPcSummary(
     string Address, string HostName, string BusId, string VendorId, string ProductId, bool Shared, double SecondsSinceLastSeen)
